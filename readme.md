@@ -132,7 +132,7 @@ tmd -conf
 
 | 参数 | 类型 | 可重复 | 说明 |
 |------|------|--------|------|
-| `--profile` | bool | - | 与推文下载参数配合，同时下载用户资料 |
+| `--profile` | bool | - | 默认，与推文下载参数配合，同时下载用户资料 |
 | `-noprofile` | bool | false | 跳过 Profile 下载 |
 | `-profile-user` | string | ✅ | 单独指定下载 profile 的用户 |
 | `-profile-list` | uint64 | ✅ | 单独指定下载 profile 的列表ID |
@@ -264,10 +264,10 @@ tmd -user elonmusk -dbg
 
 ```bash
 # 仅下载推文
-tmd -user elonmusk
+tmd -user elonmusk -noprofile
 
 # 下载推文 + Profile
-tmd -user elonmusk --profile
+tmd -user elonmusk
 
 # 使用用户ID
 tmd -user 44196397
@@ -283,7 +283,10 @@ tmd -user @elonmusk
 tmd -user elonmusk -user NASA -user SpaceX
 
 # 下载多个用户的推文 + Profile
-tmd -user elonmusk -user NASA -user SpaceX --profile
+tmd -user elonmusk -user NASA -user SpaceX
+
+# 下载多个用户的推文，不下载Profile
+tmd -user elonmusk -user NASA -user SpaceX  -noprofile
 
 # 仅下载多个用户的 Profile
 tmd -profile-user elonmusk -profile-user NASA -profile-user SpaceX
@@ -296,7 +299,10 @@ tmd -profile-user elonmusk -profile-user NASA -profile-user SpaceX
 tmd -list 1234567890123
 
 # 下载列表成员推文 + Profile
-tmd -list 1234567890123 --profile
+tmd -list 1234567890123
+
+# 下载列表成员推文，不下载Profile
+tmd -list 1234567890123 -noprofile
 
 # 仅下载列表成员 Profile
 tmd -profile-list 1234567890123
@@ -310,18 +316,15 @@ tmd -list 111111 -list 222222 --profile
 ```bash
 # 下载某用户关注的所有人
 tmd -foll myusername
-
-# 下载关注列表 + Profile
-tmd -foll myusername --profile
 ```
 
 ### 场景6：混合下载
 
 ```bash
 # 用户 + 列表 + 关注列表
-tmd -user elonmusk -list 123456 -foll myusername --profile
+tmd -user elonmusk -list 123456 -foll myusername
 
-# Profile 专用下载
+# Profile 专用下载，只下载profile
 tmd -profile-user elonmusk -profile-list 123456
 ```
 
