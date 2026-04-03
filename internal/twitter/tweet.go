@@ -2,6 +2,7 @@ package twitter
 
 import (
 	"fmt"
+	"html"
 	"time"
 
 	"github.com/tidwall/gjson"
@@ -13,11 +14,12 @@ type Tweet struct {
 	CreatedAt time.Time
 	Creator   *User
 	Urls      []string
+	RawJSON   string
 }
 
 func parseTweetResults(tweet_results *gjson.Result) *Tweet {
 	var tweet Tweet
-	var err error = nil
+	var err error
 
 	result := tweet_results.Get("result")
 	if !result.Exists() || result.Get("__typename").String() == "TweetTombstone" {
@@ -34,7 +36,16 @@ func parseTweetResults(tweet_results *gjson.Result) *Tweet {
 	user_results := result.Get("core.user_results")
 
 	tweet.Id = result.Get("rest_id").Uint()
-	tweet.Text = legacy.Get("full_text").String()
+	tweet.RawJSON = result.Raw
+
+	// 优先从 note_tweet 获取长推文完整文本（Twitter 支持 4000 字符长推文）
+	noteTweet := result.Get("note_tweet.note_tweet_results.result.text")
+	if noteTweet.Exists() && noteTweet.String() != "" {
+		tweet.Text = html.UnescapeString(noteTweet.String())
+	} else {
+		tweet.Text = html.UnescapeString(legacy.Get("full_text").String())
+	}
+
 	tweet.Creator, _ = parseUserResults(&user_results)
 	tweet.CreatedAt, err = time.Parse(time.RubyDate, legacy.Get("created_at").String())
 	if err != nil {
@@ -50,10 +61,10 @@ func parseTweetResults(tweet_results *gjson.Result) *Tweet {
 func getUrlsFromMedia(media *gjson.Result) []string {
 	results := []string{}
 	for _, m := range media.Array() {
-		typ := m.Get("type").String()
-		if typ == "video" || typ == "animated_gif" {
+		switch m.Get("type").String() {
+		case "video", "animated_gif":
 			results = append(results, m.Get("video_info.variants.@reverse.0.url").String())
-		} else if typ == "photo" {
+		case "photo":
 			results = append(results, m.Get("media_url_https").String())
 		}
 	}

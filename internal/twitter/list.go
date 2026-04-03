@@ -32,6 +32,10 @@ func GetLst(ctx context.Context, client *resty.Client, id uint64) (*List, error)
 		return nil, err
 	}
 
+	if err := CheckApiResp(resp.Body()); err != nil {
+		return nil, err
+	}
+
 	list := gjson.GetBytes(resp.Body(), "data.list")
 	return parseList(&list)
 }
@@ -40,20 +44,22 @@ func parseList(list *gjson.Result) (*List, error) {
 	if !list.Exists() {
 		return nil, fmt.Errorf("the list doesn't exist")
 	}
-	user_results := list.Get("user_results")
-	creator, err := parseUserResults(&user_results)
-	if err != nil {
-		return nil, err
-	}
 	id_str := list.Get("id_str")
 	member_count := list.Get("member_count")
 	name := list.Get("name")
 
 	result := List{}
-	result.Creator = creator
 	result.Id = id_str.Uint()
 	result.MemberCount = int(member_count.Int())
 	result.Name = name.String()
+
+	user_results := list.Get("user_results")
+	if user_results.Exists() {
+		if creator, err := parseUserResults(&user_results); err == nil {
+			result.Creator = creator
+		}
+	}
+
 	return &result, nil
 }
 
@@ -66,10 +72,7 @@ func itemContentsToUsers(itemContents []gjson.Result) []*User {
 		}
 		u, err := parseUserResults(&user_results)
 		if err != nil {
-			log.WithFields(log.Fields{
-				"user_results": user_results.String(),
-				"reason":       err,
-			}).Debugf("failed to parse user_results")
+			log.Debugln("user_results parse failed:", err, "- data:", user_results.String())
 			continue
 		}
 		users = append(users, u)

@@ -304,7 +304,7 @@ func compareMaps(a, b map[string]string) bool {
 }
 
 func TestHeap(t *testing.T) {
-	heap := NewHeap[int](func(a, b int) bool { return a < b })
+	heap := NewHeap(func(a, b int) bool { return a < b })
 	nums := []int{1, 3, 0, 9, 2, 0, 1}
 	wants := []int{0, 0, 1, 1, 2, 3, 9}
 	for _, v := range nums {

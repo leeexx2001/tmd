@@ -2,6 +2,7 @@ package database
 
 import (
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -284,8 +285,28 @@ func UpdateLstEntity(db *sqlx.DB, entity *LstEntity) error {
 
 func SetUserEntityLatestReleaseTime(db *sqlx.DB, id int, t time.Time) error {
 	stmt := `UPDATE user_entities SET latest_release_time=? WHERE id=?`
-	_, err := db.Exec(stmt, t, id)
-	return err
+	result, err := db.Exec(stmt, t, id)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("no user entity found with id %d", id)
+	}
+	return nil
+}
+
+func ClearUserEntityLatestReleaseTime(db *sqlx.DB, id int) error {
+	stmt := `UPDATE user_entities SET latest_release_time=NULL WHERE id=?`
+	result, err := db.Exec(stmt, id)
+	if err != nil {
+		return err
+	}
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		return fmt.Errorf("no user entity found with id %d", id)
+	}
+	return nil
 }
 
 func RecordUserPreviousName(db *sqlx.DB, uid uint64, name string, screenName string) error {
@@ -341,4 +362,14 @@ func UpdateUserLink(db *sqlx.DB, id int32, name string) error {
 	stmt := `UPDATE user_links SET name = ? WHERE id = ?`
 	_, err := db.Exec(stmt, name, id)
 	return err
+}
+
+// GetUserLinksByLstEntityId 获取指定列表实体下的所有用户链接
+func GetUserLinksByLstEntityId(db interface {
+	Select(dest interface{}, query string, args ...interface{}) error
+}, lstEntityId int) ([]*UserLink, error) {
+	stmt := `SELECT * FROM user_links WHERE parent_lst_entity_id = ?`
+	res := []*UserLink{}
+	err := db.Select(&res, stmt, lstEntityId)
+	return res, err
 }

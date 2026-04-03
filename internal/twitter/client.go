@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -24,6 +25,31 @@ var clientScreenNames sync.Map
 var clientErrors sync.Map
 var clientRateLimiters sync.Map
 var apiCounts sync.Map
+
+// getProxyFromEnvironment 从环境变量获取代理设置
+// 优先使用 HTTPS_PROXY/https_proxy，如果没有设置则使用 HTTP_PROXY/http_proxy
+// 这样用户只需要设置 HTTP_PROXY 就可以代理 HTTPS 请求
+func getProxyFromEnvironment(req *http.Request) (*url.URL, error) {
+	// 首先尝试 HTTPS_PROXY（标准行为）
+	proxyURL, err := http.ProxyFromEnvironment(req)
+	if err != nil {
+		return nil, err
+	}
+	if proxyURL != nil {
+		return proxyURL, nil
+	}
+
+	// 如果 HTTPS 请求没有获取到代理，尝试 HTTP_PROXY
+	if req.URL.Scheme == "https" {
+		for _, env := range []string{"HTTP_PROXY", "http_proxy"} {
+			if value := os.Getenv(env); value != "" {
+				return url.Parse(value)
+			}
+		}
+	}
+
+	return nil, nil
+}
 
 func SetClientAuth(client *resty.Client, authToken string, ct0 string) {
 	client.SetAuthToken(bearer)
@@ -57,24 +83,57 @@ func Login(ctx context.Context, authToken string, ct0 string) (*resty.Client, st
 
 	// 重试
 	client.SetRetryCount(5)
+
+	// 条件 1: TCP/网络错误（非 Twitter API 错误）
 	client.AddRetryCondition(func(r *resty.Response, err error) bool {
 		if err == ErrWouldBlock {
 			return false
 		}
-		// For TCP Error
+		// 网络连接错误（连接重置、断开等）
+		if err != nil {
+			errStr := err.Error()
+			if strings.Contains(errStr, "connection reset") ||
+				strings.Contains(errStr, "broken pipe") ||
+				strings.Contains(errStr, "timeout") {
+				return true
+			}
+		}
+		// 其他 TCP 错误（非 TwitterApiError 或 HttpStatusError）
 		_, ok := err.(*TwitterApiError)
 		_, ok2 := err.(*utils.HttpStatusError)
 		return !ok && !ok2 && err != nil
 	})
+
+	// 条件 2: Twitter API 错误（包括服务器内部错误）
 	client.AddRetryCondition(func(r *resty.Response, err error) bool {
-		// For Twitter API Error
 		v, ok := err.(*TwitterApiError)
-		return ok && r.Request.RawRequest.Host == "x.com" && (v.Code == ErrTimeout || v.Code == ErrOverCapacity || v.Code == ErrDependency)
+		if !ok {
+			return false
+		}
+		// 服务器端错误都应该重试
+		switch v.Code {
+		case ErrTimeout, // 29
+			ErrOverCapacity, // 130
+			ErrDependency,   // 0
+			-1:              // Internal/Unspecified/Unknown
+			return true
+		}
+		return false
 	})
+
+	// 条件 3: HTTP 状态码错误
 	client.AddRetryCondition(func(r *resty.Response, err error) bool {
-		// For Http 429
+		// 检查 r 是否为 nil（请求完全失败时）
+		if r == nil {
+			return false
+		}
+		// HTTP 5xx 服务器错误
+		if r.StatusCode() >= 500 && r.StatusCode() < 600 {
+			return true
+		}
+		// HTTP 429 速率限制
 		v, ok := err.(*utils.HttpStatusError)
-		return ok && r.Request.RawRequest.Host == "x.com" && v.Code == 429
+		return ok && r.Request != nil && r.Request.RawRequest != nil && r.Request.RawRequest.Host == "x.com" && v.Code == 429
 	})
 
 	client.SetTransport(&http.Transport{
@@ -83,7 +142,7 @@ func Login(ctx context.Context, authToken string, ct0 string) (*resty.Client, st
 		IdleConnTimeout:       5 * time.Second, // 连接空闲 n 秒后断开它
 		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: 5 * time.Second,
-		Proxy:                 http.ProxyFromEnvironment,
+		Proxy:                 getProxyFromEnvironment,
 	})
 
 	screenName, err := GetSelfScreenName(ctx, client)
@@ -133,9 +192,7 @@ func (rl *xRateLimit) preRequest(ctx context.Context, nonBlocking bool) error {
 	}
 
 	if time.Now().After(rl.ResetTime) {
-		log.WithFields(log.Fields{
-			"path": rl.Url,
-		}).Debugf("[RateLimiter] rate limit is expired")
+		log.Debugln("[RateLimiter] rate limit expired - path:", rl.Url)
 		rl.Ready = false // 后续的请求等待本次请求完成更新速率限制
 		return nil
 	}
@@ -149,10 +206,7 @@ func (rl *xRateLimit) preRequest(ctx context.Context, nonBlocking bool) error {
 		}
 
 		insurance := 5 * time.Second
-		log.WithFields(log.Fields{
-			"path":  rl.Url,
-			"until": rl.ResetTime.Add(insurance),
-		}).Warnln("[RateLimiter] start sleeping")
+		log.Warnln("[RateLimiter] sleeping until:", rl.ResetTime.Add(insurance), "- path:", rl.Url)
 
 		origin, err := utils.GetConsoleTitle()
 		if err == nil {
@@ -419,7 +473,7 @@ func GetClientError(cli *resty.Client) error {
 func SetClientError(cli *resty.Client, err error) {
 	clientErrors.Store(cli, err)
 	if err != nil {
-		log.WithField("client", GetClientScreenName(cli)).Debugln("client is no longer available:", err)
+		log.Debugln("✗", GetClientScreenName(cli), "-", "client is no longer available:", err)
 	}
 }
 
@@ -476,4 +530,85 @@ func SelectClient(ctx context.Context, clients []*resty.Client, path string) *re
 
 func SelectUserMediaClient(ctx context.Context, clients []*resty.Client) *resty.Client {
 	return SelectClient(ctx, clients, (&userMedia{}).Path())
+}
+
+func SelectProfileClient(ctx context.Context, clients []*resty.Client) *resty.Client {
+	return SelectClient(ctx, clients, (&userByScreenName{}).Path())
+}
+
+// UserMediaPath 返回 UserMedia API 的路径
+func UserMediaPath() string {
+	return (&userMedia{}).Path()
+}
+
+// isClientAvailable 检查客户端是否可用（内存检查，不产生网络请求）
+func isClientAvailable(client *resty.Client, path string) bool {
+	if GetClientError(client) != nil {
+		return false
+	}
+	rl := GetClientRateLimiter(client)
+	if rl != nil && rl.wouldBlock(path) {
+		return false
+	}
+	return true
+}
+
+// SelectClientMFQ 带指数退避的 MFQ 客户端选择
+// Q1: 只用附加账户（非受保护用户优先）
+// Q2: 附加账户 + 主账户 + 指数退避
+// Q3: 主账户独占（受保护用户）
+func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*resty.Client, user *User, path string) *resty.Client {
+	// Q3: 受保护用户 → 主账户独占
+	if user.IsProtected {
+		return master
+	}
+
+	// Q1: 只用附加账户
+	for _, cli := range additional {
+		if isClientAvailable(cli, path) {
+			return cli
+		}
+	}
+
+	// Q2: 附加账户 + 主账户 + 指数退避
+	backoff := 3 * time.Second
+	maxBackoff := 60 * time.Second
+	clients := append(append([]*resty.Client{}, additional...), master)
+
+	for ctx.Err() == nil {
+		// 一轮：检查所有账户
+		available := false
+		errs := 0
+		for _, cli := range clients {
+			if GetClientError(cli) != nil {
+				errs++
+				continue
+			}
+			rl := GetClientRateLimiter(cli)
+			if rl == nil || !rl.wouldBlock(path) {
+				return cli
+			}
+			available = true // 有客户端只是被限速，不是错误
+		}
+
+		// 所有客户端都有错误，返回 nil
+		if errs == len(clients) {
+			return nil
+		}
+
+		// 有客户端只是被限速，等待后重试
+		if !available {
+			break
+		}
+
+		// 本轮全部失败，指数退避等待
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(backoff):
+			backoff = min(backoff*2, maxBackoff)
+		}
+	}
+
+	return nil
 }
