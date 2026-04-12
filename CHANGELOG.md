@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.1.0] - 2026-04-12
+## [2.6.0] - 2026-04-12
 
 ### Added
 
@@ -125,7 +125,7 @@ main.go (应用层)
 
 ---
 
-## [1.0.0] - 2026-04-04
+## [2.5.0] - 2026-04-04
 
 ### Added
 
