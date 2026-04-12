@@ -16,6 +16,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
+	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -26,6 +27,18 @@ const (
 )
 
 var MaxDownloadRoutine = 20
+
+func ensureProfileDirs(userDir string) (string, error) {
+	profileDir := filepath.Join(userDir, profileDirName, profileSubDirName)
+	if err := os.MkdirAll(profileDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create profile dir: %w", err)
+	}
+	versionsDir := filepath.Join(profileDir, versionsDirName)
+	if err := os.MkdirAll(versionsDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create versions dir: %w", err)
+	}
+	return profileDir, nil
+}
 
 func extractExtFromURL(url string) string {
 	ext := path.Ext(url)
@@ -46,39 +59,29 @@ func extractExtFromURL(url string) string {
 }
 
 type ProfileDownloader struct {
-	config  *Config
-	storage *FileStorageManager
-	fetcher Fetcher
-	db      *sqlx.DB
+	config     *Config
+	storage    *FileStorageManager
+	fetcher    Fetcher
+	db         *sqlx.DB
+	downloader downloader.Downloader
+	fileWriter downloader.FileWriter
 }
 
-func NewProfileDownloader(config *Config, storage *FileStorageManager, fetcher Fetcher) *ProfileDownloader {
+func NewProfileDownloader(config *Config, storage *FileStorageManager, fetcher Fetcher, dwn downloader.Downloader, fw downloader.FileWriter) *ProfileDownloader {
 	if config == nil {
 		config = DefaultConfig()
 	}
 
 	return &ProfileDownloader{
-		config:  config,
-		storage: storage,
-		fetcher: fetcher,
+		config:     config,
+		storage:    storage,
+		fetcher:    fetcher,
+		downloader: dwn,
+		fileWriter: fw,
 	}
 }
 
-func NewProfileDownloaderWithClients(config *Config, storage *FileStorageManager, clients []*resty.Client) *ProfileDownloader {
-	if config == nil {
-		config = DefaultConfig()
-	}
-
-	fetcher := NewTwitterFetcherWithClients(clients)
-
-	return &ProfileDownloader{
-		config:  config,
-		storage: storage,
-		fetcher: fetcher,
-	}
-}
-
-func NewProfileDownloaderWithDB(config *Config, storage *FileStorageManager, clients []*resty.Client, db *sqlx.DB) *ProfileDownloader {
+func NewProfileDownloaderWithClients(config *Config, storage *FileStorageManager, clients []*resty.Client, dwn downloader.Downloader, fw downloader.FileWriter) *ProfileDownloader {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -86,10 +89,28 @@ func NewProfileDownloaderWithDB(config *Config, storage *FileStorageManager, cli
 	fetcher := NewTwitterFetcherWithClients(clients)
 
 	return &ProfileDownloader{
-		config:  config,
-		storage: storage,
-		fetcher: fetcher,
-		db:      db,
+		config:     config,
+		storage:    storage,
+		fetcher:    fetcher,
+		downloader: dwn,
+		fileWriter: fw,
+	}
+}
+
+func NewProfileDownloaderWithDB(config *Config, storage *FileStorageManager, clients []*resty.Client, db *sqlx.DB, dwn downloader.Downloader, fw downloader.FileWriter) *ProfileDownloader {
+	if config == nil {
+		config = DefaultConfig()
+	}
+
+	fetcher := NewTwitterFetcherWithClients(clients)
+
+	return &ProfileDownloader{
+		config:     config,
+		storage:    storage,
+		fetcher:    fetcher,
+		db:         db,
+		downloader: dwn,
+		fileWriter: fw,
 	}
 }
 
@@ -124,13 +145,9 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 		Files:      make([]FileResult, 0),
 	}
 
-	log.Infoln("downloading profile:", req.ScreenName)
-
 	var profile *ProfileInfo
 	var err error
 
-	// 判断是否需要调用API获取用户数据
-	// 如果 UserID 为 0 或 AvatarURL 为空，说明没有预获取数据，需要调用API
 	needAPICall := req.UserID == 0 || req.AvatarURL == ""
 
 	if needAPICall && pd.fetcher != nil {
@@ -177,7 +194,7 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 			return result, result.Error
 		}
 	} else {
-		userDir, err = pd.storage.EnsureDirectory(userTitle, req.ScreenName)
+		userDir, err = pd.storage.EnsureDirectory(userTitle)
 		if err != nil {
 			result.Error = fmt.Errorf("failed to create directory: %w", err)
 			return result, result.Error
@@ -214,8 +231,6 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 	}
 
 	result.DownloadTime = time.Since(startTime)
-
-	log.Infoln("profile done:", req.ScreenName, "-", len(result.Files), "files")
 
 	return result, nil
 }
@@ -277,15 +292,8 @@ func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, 
 		if err := database.CreateUserEntity(pd.db, entity); err != nil {
 			return "", err
 		}
-		profileDir := filepath.Join(userDir, profileDirName, profileSubDirName)
-		if err := os.MkdirAll(profileDir, 0755); err != nil {
-			return "", err
-		}
-		versionsDir := filepath.Join(profileDir, versionsDirName)
-		if err := os.MkdirAll(versionsDir, 0755); err != nil {
-			return "", err
-		}
-		return profileDir, nil
+		log.Infoln("new user directory created:", userDir)
+		return ensureProfileDirs(userDir)
 	}
 
 	oldUserDir := entity.Path()
@@ -293,22 +301,14 @@ func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, 
 		if err := os.MkdirAll(oldUserDir, 0755); err != nil && !os.IsExist(err) {
 			return "", err
 		}
-		profileDir := filepath.Join(oldUserDir, profileDirName, profileSubDirName)
-		if err := os.MkdirAll(profileDir, 0755); err != nil {
-			return "", err
-		}
-		versionsDir := filepath.Join(profileDir, versionsDirName)
-		if err := os.MkdirAll(versionsDir, 0755); err != nil {
-			return "", err
-		}
-		return profileDir, nil
+		return ensureProfileDirs(oldUserDir)
 	}
 
 	newUserDir := filepath.Join(pd.storage.usersBasePath, expectedTitle)
 	if err := os.Rename(oldUserDir, newUserDir); err != nil {
 		if os.IsNotExist(err) {
-			if err := os.MkdirAll(newUserDir, 0755); err != nil {
-				return "", err
+			if mkdirErr := os.MkdirAll(newUserDir, 0755); mkdirErr != nil {
+				return "", mkdirErr
 			}
 		} else {
 			return "", err
@@ -320,16 +320,8 @@ func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, 
 		return "", err
 	}
 
-	log.Debugln("user directory renamed:", oldUserDir, "->", newUserDir)
-	profileDir := filepath.Join(newUserDir, profileDirName, profileSubDirName)
-	if err := os.MkdirAll(profileDir, 0755); err != nil {
-		return "", err
-	}
-	versionsDir := filepath.Join(profileDir, versionsDirName)
-	if err := os.MkdirAll(versionsDir, 0755); err != nil {
-		return "", err
-	}
-	return profileDir, nil
+	log.Infoln("user directory renamed:", oldUserDir, "->", newUserDir)
+	return ensureProfileDirs(newUserDir)
 }
 
 func (pd *ProfileDownloader) DownloadMultiple(ctx context.Context, requests []DownloadRequest) []*DownloadResult {
@@ -372,7 +364,7 @@ func (pd *ProfileDownloader) profileDownloader(
 	defer wg.Done()
 	defer func() {
 		if p := recover(); p != nil {
-			log.Errorln("profile downloader panic:", p)
+			log.Errorf("[profileDownloader] panic recovered: %v", p)
 			cancel(fmt.Errorf("panic: %v", p))
 
 			// 把 channel 中剩余的任务标记为失败
@@ -434,113 +426,130 @@ func (pd *ProfileDownloader) profileDownloader(
 	}
 }
 
-func (pd *ProfileDownloader) saveFile(userTitle, screenName string, fileType FileType, filePath string, data []byte, fetchedAt time.Time, logPrefix string) FileResult {
-	result := FileResult{
-		FileType: fileType,
-		FilePath: filePath,
-		NewSize:  int64(len(data)),
-	}
-
-	exists, fileInfo, err := pd.storage.FileExists(result.FilePath)
-	if err != nil {
-		result.Status = StatusFailed
-		result.Error = err
-		return result
-	}
-
-	if exists && pd.config.SkipUnchanged {
-		if fileInfo.Size != result.NewSize {
-			log.Debugln(logPrefix, "size changed for", screenName, "old:", fileInfo.Size, "new:", result.NewSize)
-		} else {
-			oldHash, err := pd.storage.ComputeFileHash(result.FilePath)
-			if err != nil {
-				log.Warnln(logPrefix, "hash compute failed:", screenName, "-", err)
-			} else {
-				newHash := ComputeDataHash(data)
-				if oldHash == newHash {
-					result.Status = StatusSkipped
-					result.OldSize = fileInfo.Size
-					log.Debugln(logPrefix, "unchanged (hash match), skipping:", screenName)
-					return result
-				}
-				log.Debugln(logPrefix, "hash changed for", screenName)
-			}
-		}
-	}
-
-	if exists && pd.config.EnableVersioning {
-		versionPath, err := pd.storage.CreateVersion(userTitle, screenName, fileType, result.FilePath)
-		if err != nil {
-			log.Warnln(logPrefix, "version backup failed:", screenName, "-", err)
-		} else {
-			result.VersionPath = versionPath
-			result.OldSize = fileInfo.Size
-			log.Debugln(logPrefix, "version backup created:", versionPath)
-		}
-	}
-
-	if err := pd.storage.AtomicWrite(result.FilePath, data); err != nil {
-		result.Status = StatusFailed
-		result.Error = err
-		log.Errorln(logPrefix, "save failed:", screenName, "-", err)
-		return result
-	}
-
-	os.Chtimes(result.FilePath, time.Time{}, fetchedAt)
-
-	if result.VersionPath != "" {
-		result.Status = StatusVersioned
-	} else {
-		result.Status = StatusDownloaded
-	}
-
-	log.Debugln(logPrefix, "saved for", screenName)
-	return result
-}
-
 func (pd *ProfileDownloader) downloadAvatar(ctx context.Context, userTitle, screenName, url string, fetchedAt time.Time) FileResult {
 	ext := extractExtFromURL(url)
-	filePath := pd.storage.GetFilePathWithExt(userTitle, screenName, FileTypeAvatar, ext)
+	filePath := pd.storage.GetFilePathWithExt(userTitle, FileTypeAvatar, ext)
 
-	data, err := pd.fetcher.FetchAvatar(ctx, url)
+	client := pd.fetcher.Client()
+
+	downloadReq := downloader.DownloadRequest{
+		Context:     ctx,
+		Client:      client,
+		URL:         GetHighResAvatarURL(url, pd.config.AvatarQuality),
+		Destination: filePath,
+		Options: downloader.DownloadOptions{
+			SkipUnchanged: pd.config.SkipUnchanged,
+			CreateVersion: pd.config.EnableVersioning,
+			SetModTime:    &fetchedAt,
+		},
+	}
+
+	result, err := pd.downloader.Download(downloadReq)
 	if err != nil {
-		result := FileResult{
+		fileResult := FileResult{
 			FileType: FileTypeAvatar,
-			FilePath: filePath,
 			Status:   StatusFailed,
 			Error:    err,
 		}
 		log.Errorln("avatar download failed:", screenName, "-", err)
-		return result
+		return fileResult
 	}
 
-	return pd.saveFile(userTitle, screenName, FileTypeAvatar, filePath, data, fetchedAt, "avatar")
+	status := StatusDownloaded
+	if result.Skipped {
+		status = StatusSkipped
+	}
+
+	return FileResult{
+		FileType: FileTypeAvatar,
+		Status:   status,
+		FilePath: result.FilePath,
+		OldSize:  result.OldSize,
+		NewSize:  result.FileSize,
+	}
 }
 
 func (pd *ProfileDownloader) downloadBanner(ctx context.Context, userTitle, screenName, url string, fetchedAt time.Time) FileResult {
-	data, ext, err := pd.fetcher.FetchBanner(ctx, url)
+	client := pd.fetcher.Client()
+	filePath := pd.storage.GetFilePathWithExt(userTitle, FileTypeBanner, ".jpg") // 默认扩展名
+
+	downloadReq := downloader.DownloadRequest{
+		Context:     ctx,
+		Client:      client,
+		URL:         url,
+		Destination: filePath,
+		Options: downloader.DownloadOptions{
+			SkipUnchanged: pd.config.SkipUnchanged,
+			CreateVersion: pd.config.EnableVersioning,
+			SetModTime:    &fetchedAt,
+		},
+	}
+
+	result, err := pd.downloader.Download(downloadReq)
 	if err != nil {
-		result := FileResult{
+		fileResult := FileResult{
 			FileType: FileTypeBanner,
 			Status:   StatusFailed,
 			Error:    err,
 		}
 		log.Errorln("banner download failed:", screenName, "-", err)
-		return result
+		return fileResult
 	}
 
-	filePath := pd.storage.GetFilePathWithExt(userTitle, screenName, FileTypeBanner, ext)
-	return pd.saveFile(userTitle, screenName, FileTypeBanner, filePath, data, fetchedAt, "banner")
+	status := StatusDownloaded
+	if result.Skipped {
+		status = StatusSkipped
+	}
+
+	return FileResult{
+		FileType: FileTypeBanner,
+		Status:   status,
+		FilePath: result.FilePath,
+		OldSize:  result.OldSize,
+		NewSize:  result.FileSize,
+	}
 }
 
-func (pd *ProfileDownloader) saveDescription(userTitle, screenName, description string, fetchedAt time.Time) FileResult {
-	filePath := pd.storage.GetFilePath(userTitle, screenName, FileTypeDescription)
+func (pd *ProfileDownloader) saveDescription(userTitle, _ string, description string, fetchedAt time.Time) FileResult {
+	filePath := pd.storage.GetFilePath(userTitle, FileTypeDescription)
 	data := []byte(description)
-	return pd.saveFile(userTitle, screenName, FileTypeDescription, filePath, data, fetchedAt, "description")
+
+	writeReq := downloader.WriteRequest{
+		Path: filePath,
+		Data: data,
+		Options: downloader.WriteOptions{
+			CreateVersion: pd.config.EnableVersioning,
+			SkipUnchanged: pd.config.SkipUnchanged,
+			ModTime:       &fetchedAt,
+		},
+	}
+
+	result, err := pd.fileWriter.Write(writeReq)
+	if err != nil {
+		return FileResult{
+			FileType: FileTypeDescription,
+			FilePath: filePath,
+			Status:   StatusFailed,
+			Error:    err,
+		}
+	}
+
+	status := StatusDownloaded
+	if result.Skipped {
+		status = StatusSkipped
+	}
+
+	return FileResult{
+		FileType: FileTypeDescription,
+		Status:   status,
+		FilePath: filePath,
+		OldSize:  result.OldSize,
+		NewSize:  result.NewSize,
+	}
 }
 
 func (pd *ProfileDownloader) saveProfileJSON(userTitle, screenName string, profile *ProfileInfo, fetchedAt time.Time) FileResult {
-	filePath := pd.storage.GetFilePath(userTitle, screenName, FileTypeProfile)
+	filePath := pd.storage.GetFilePath(userTitle, FileTypeProfile)
 
 	data, err := ProfileToJSON(profile)
 	if err != nil {
@@ -554,5 +563,36 @@ func (pd *ProfileDownloader) saveProfileJSON(userTitle, screenName string, profi
 		return result
 	}
 
-	return pd.saveFile(userTitle, screenName, FileTypeProfile, filePath, data, fetchedAt, "profile JSON")
+	writeReq := downloader.WriteRequest{
+		Path: filePath,
+		Data: data,
+		Options: downloader.WriteOptions{
+			CreateVersion: pd.config.EnableVersioning,
+			SkipUnchanged: pd.config.SkipUnchanged,
+			ModTime:       &fetchedAt,
+		},
+	}
+
+	result, err := pd.fileWriter.Write(writeReq)
+	if err != nil {
+		return FileResult{
+			FileType: FileTypeProfile,
+			FilePath: filePath,
+			Status:   StatusFailed,
+			Error:    err,
+		}
+	}
+
+	status := StatusDownloaded
+	if result.Skipped {
+		status = StatusSkipped
+	}
+
+	return FileResult{
+		FileType: FileTypeProfile,
+		Status:   status,
+		FilePath: filePath,
+		OldSize:  result.OldSize,
+		NewSize:  result.NewSize,
+	}
 }

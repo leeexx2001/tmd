@@ -24,7 +24,9 @@ import (
 	"github.com/rifflock/lfshook"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
+	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/downloading"
+	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/profile"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
@@ -111,6 +113,26 @@ func (a *intArgs) String() string {
 
 type ListArgs struct {
 	intArgs
+}
+
+type jsonPathsArgs struct {
+	paths []string
+}
+
+func (j *jsonPathsArgs) Set(str string) error {
+	if j.paths == nil {
+		j.paths = make([]string, 0)
+	}
+	j.paths = append(j.paths, str)
+	return nil
+}
+
+func (j *jsonPathsArgs) String() string {
+	return "json file paths"
+}
+
+func (j *jsonPathsArgs) GetPaths() []string {
+	return j.paths
 }
 
 func (l ListArgs) GetList(ctx context.Context, client *resty.Client) ([]*twitter.List, error) {
@@ -241,6 +263,7 @@ func main() {
 	var noProfile bool
 	var profileUsers userArgs
 	var profileList ListArgs
+	var jsonArgs jsonPathsArgs
 
 	flag.BoolVar(&confArg, "conf", false, "reconfigure")
 	flag.Var(&usrArgs, "user", "download tweets from the user specified by user_id/screen_name since the last download")
@@ -254,6 +277,7 @@ func main() {
 	flag.BoolVar(&noProfile, "noprofile", false, "skip downloading user profiles")
 	flag.Var(&profileUsers, "profile-user", "download profile for specified user (can be used multiple times)")
 	flag.Var(&profileList, "profile-list", "download profiles for all members in the specified list")
+	flag.Var(&jsonArgs, "json", "download media from JSON file(s) exported by other tools (supports raw API JSON and formatted .loongtweet JSON)")
 	flag.Parse()
 
 	var err error
@@ -319,14 +343,8 @@ func main() {
 	}
 	// 设置文件名长度限制（范围：50-250，0=使用默认值）
 	if conf.MaxFileNameLen > 0 {
-		if conf.MaxFileNameLen < 50 {
-			conf.MaxFileNameLen = 50 // 最小限制，避免文件名过短
-		}
-		if conf.MaxFileNameLen > 250 {
-			conf.MaxFileNameLen = 250 // 最大限制，Windows 安全值
-		}
-		utils.MaxFileNameLen = conf.MaxFileNameLen
-		log.Infoln("max file name length set to:", utils.MaxFileNameLen)
+		naming.SetMaxFileNameLen(conf.MaxFileNameLen)
+		log.Infoln("max file name length set to:", naming.MaxFileNameLen)
 	}
 
 	// ensure store path exist
@@ -400,6 +418,15 @@ func main() {
 		}
 	}()
 
+	// 创建版本管理器
+	versionManager := downloader.NewVersionManager(".versions")
+
+	// 创建文件写入器
+	fileWriter := downloader.NewFileWriter(versionManager)
+
+	// 创建下载器
+	dwn := downloader.NewDownloader(fileWriter)
+
 	// dump failed tweets at exit
 	var todump = make([]*downloading.TweetInEntity, 0)
 	defer func() {
@@ -414,12 +441,12 @@ func main() {
 		}
 		// 如果手动取消，不尝试重试，快速终止进程
 		if ctx.Err() != context.Canceled && !noRetry {
-			retryFailedTweets(ctx, dumper, db, client)
+			retryFailedTweets(ctx, dumper, db, client, dwn)
 		}
 	}()
 
 	// do job - 推文下载先执行
-	if len(task.users) == 0 && len(task.lists) == 0 {
+	if len(task.users) == 0 && len(task.lists) == 0 && len(jsonArgs.GetPaths()) == 0 {
 		// 没有推文下载任务，直接执行 profile 下载（如果有）
 		goto handleProfile
 	}
@@ -445,8 +472,23 @@ func main() {
 			}
 			fmt.Println("=== END_RESULTS ===")
 		}
+	} else if len(jsonArgs.GetPaths()) > 0 {
+		// 从 JSON 文件下载媒体（不需要 API 调用）
+		log.Infof("downloading from %d JSON file(s)...", len(jsonArgs.GetPaths()))
+		results := downloading.DownloadJsonDir(ctx, client, pathHelper.root, dwn, jsonArgs.GetPaths()...)
+		var successCount, failCount int
+		for _, r := range results {
+			if r.Success {
+				successCount++
+				log.Infof("✓ %s: %d tweets processed in %v", filepath.Base(r.Path), r.TweetCount, r.Duration)
+			} else {
+				failCount++
+				log.Errorf("✗ %s: %v", filepath.Base(r.Path), r.Error)
+			}
+		}
+		log.Infof("JSON download completed: %d success, %d failed", successCount, failCount)
 	} else {
-		todump, err = downloading.BatchDownloadAny(ctx, client, db, task.lists, task.users, pathHelper.root, pathHelper.users, autoFollow, addtional)
+		todump, err = downloading.BatchDownloadAny(ctx, client, db, task.lists, task.users, pathHelper.root, pathHelper.users, autoFollow, addtional, dwn)
 		if err != nil {
 			log.Errorln("failed to download:", err)
 		}
@@ -464,7 +506,7 @@ handleProfile:
 		go func() {
 			defer close(profileDone)
 			// skipAPIFetch = shouldDownloadProfile，因为从推文下载中已经获取了用户数据
-			handleProfileDownload(profileCtx, client, addtional, pathHelper.users, profileUsers, profileList, task, db, shouldDownloadProfile)
+			handleProfileDownload(profileCtx, client, addtional, pathHelper.users, profileUsers, profileList, task, db, shouldDownloadProfile, dwn, fileWriter)
 		}()
 		// 等待 profile 下载完成或主 context 被取消
 		select {
@@ -617,7 +659,7 @@ func promptConfig(saveto string) (*Config, error) {
 	return conf, writeConf(saveto, conf)
 }
 
-func retryFailedTweets(ctx context.Context, dumper *downloading.TweetDumper, db *sqlx.DB, client *resty.Client) error {
+func retryFailedTweets(ctx context.Context, dumper *downloading.TweetDumper, db *sqlx.DB, client *resty.Client, dwn downloader.Downloader) error {
 	if dumper.Count() == 0 {
 		return nil
 	}
@@ -634,7 +676,7 @@ func retryFailedTweets(ctx context.Context, dumper *downloading.TweetDumper, db 
 	}
 
 	// 恢复下载时不生成 .loongtweet 文件（skipLoongTweet=true）
-	newFails := downloading.BatchDownloadTweet(ctx, client, true, toretry...)
+	newFails := downloading.BatchDownloadTweet(ctx, client, true, dwn, toretry...)
 	dumper.Clear()
 	for _, pt := range newFails {
 		te := pt.(*downloading.TweetInEntity)
@@ -708,7 +750,7 @@ func batchLogin(ctx context.Context, dbg bool, cookies []*Cookie, master string)
 	return clients
 }
 
-func handleProfileDownload(ctx context.Context, client *resty.Client, additional []*resty.Client, usersPath string, profileUsers userArgs, profileList ListArgs, task *Task, db *sqlx.DB, skipAPIFetch bool) {
+func handleProfileDownload(ctx context.Context, client *resty.Client, additional []*resty.Client, usersPath string, profileUsers userArgs, profileList ListArgs, task *Task, db *sqlx.DB, skipAPIFetch bool, dwn downloader.Downloader, fileWriter downloader.FileWriter) {
 	clients := make([]*resty.Client, 0)
 	clients = append(clients, client)
 	clients = append(clients, additional...)
@@ -718,7 +760,7 @@ func handleProfileDownload(ctx context.Context, client *resty.Client, additional
 		log.Fatalln("failed to create profile storage:", err)
 	}
 
-	downloader := profile.NewProfileDownloaderWithDB(nil, storage, clients, db)
+	profileDownloader := profile.NewProfileDownloaderWithDB(nil, storage, clients, db, dwn, fileWriter)
 
 	requests := make([]profile.DownloadRequest, 0)
 
@@ -827,7 +869,7 @@ func handleProfileDownload(ctx context.Context, client *resty.Client, additional
 
 	log.Infoln("starting profile download for", len(uniqueRequests), "users")
 
-	results := downloader.DownloadMultiple(ctx, uniqueRequests)
+	results := profileDownloader.DownloadMultiple(ctx, uniqueRequests)
 
 	success := 0
 	failed := 0

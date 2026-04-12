@@ -7,7 +7,125 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [2.5.0] - 2026-04-04
+## [1.1.0] - 2026-04-12
+
+### Added
+
+#### 新增 `internal/downloader/` 包 - 通用下载基础设施
+
+将下载逻辑从业务代码中抽离，提供可复用的下载能力：
+
+| 文件 | 行数 | 功能 |
+|------|------|------|
+| `types.go` | 75 | 接口定义（Downloader, FileWriter, VersionManager） |
+| `downloader.go` | 118 | HTTP下载实现，支持批量下载和上下文取消 |
+| `file_writer.go` | 145 | 原子写入、MD5去重、版本管理 |
+| `version_manager.go` | 95 | 文件版本备份管理 |
+
+**特性：**
+- **原子写入**：先写临时文件，再重命名，确保数据完整性
+- **MD5 去重**：相同内容自动跳过写入
+- **并发安全**：使用 `sync.Mutex` 保护并发写入
+- **版本管理**：文件变更时自动备份历史版本
+
+#### 新增 `internal/naming/` 包 - 统一命名服务
+
+集中管理推文和用户的文件命名逻辑：
+
+| 类型 | 功能 |
+|------|------|
+| `TweetNaming` | 推文文件名生成，支持日志格式、文件名、文件路径 |
+| `UserNaming` | 用户目录命名，生成 `Name(ScreenName)` 格式 |
+| `SetMaxFileNameLen()` | 统一配置文件名长度限制 |
+
+**特性：**
+- 缓存清理后的文本，避免重复计算
+- 日志格式与文件名前缀一致
+- 单一配置入口，无需手动同步
+
+#### 新增 `internal/utils/recovery.go` - Panic 恢复工具
+
+统一的 panic 恢复机制：
+
+```go
+defer utils.RecoverWithLog("functionName")
+```
+
+#### 新增 `internal/downloading/json_download.go` - JSON 下载功能
+
+支持从 JSON 文件批量下载推文媒体：
+
+| 函数 | 功能 |
+|------|------|
+| `BatchDownloadFromJson()` | 从 JSON 批量下载 |
+| `DownloadJsonDir()` | 下载目录下所有 JSON 文件 |
+
+### Changed
+
+#### 架构重构
+
+**依赖注入模式：**
+- `downloader.Downloader` 接口注入到业务层
+- `main.go` 统一创建和注入依赖
+- 支持测试时 Mock
+
+**分层架构：**
+```
+main.go (应用层)
+    └── downloading/profile (业务层)
+            └── downloader (基础设施层)
+                    └── file_writer, version_manager
+```
+
+#### `internal/downloading/features.go` 重构
+
+| 变化 | 说明 |
+|------|------|
+| `downloadTweetMedia()` | 使用 `downloader.Downloader` 接口 |
+| `BatchDownloadTweet()` | 新增 `dwn` 参数 |
+| `saveLoongTweet()` | 统一数据来源（RawJSON 优先） |
+| `saveTweetJson()` | 使用 `naming.TweetNaming` |
+
+#### `internal/profile/downloader.go` 重构
+
+| 变化 | 说明 |
+|------|------|
+| 构造函数 | 新增 `dwn` 和 `fw` 参数 |
+| `downloadAvatar()` | 使用 `downloader.Downloader` |
+| `downloadBanner()` | 使用 `downloader.Downloader` |
+| `saveDescription()` | 使用 `downloader.FileWriter` |
+| `ensureProfileDirs()` | 提取目录创建逻辑 |
+
+#### `internal/utils/fs.go` 修改
+
+| 变化 | 说明 |
+|------|------|
+| 移除 `TweetFileName()` | 使用 `naming.TweetNaming` 替代 |
+| 移除 `MaxFileNameLen` 变量 | 使用 `naming.SetMaxFileNameLen()` |
+| 新增 `WinFileNameWithMaxLen()` | 支持自定义长度限制 |
+
+#### `internal/profile/storage.go` 简化
+
+| 变化 | 说明 |
+|------|------|
+| `EnsureDirectory()` | 移除 `screenName` 参数 |
+| `GetFilePath()` | 移除 `screenName` 参数 |
+
+### Fixed
+
+- 修复 `saveLoongTweet` 中 `tweet.Creator` 为 nil 时的 panic
+- 修复 `MaxFileNameLen` 双变量同步问题
+- 修复循环依赖风险（naming 包不再直接依赖 utils 变量）
+
+### Stats
+
+- **新增文件**: 6 个
+- **修改文件**: 8 个
+- **+1,200 lines / -300 lines**
+
+---
+
+## [1.0.0] - 2026-04-04
 
 ### Added
 

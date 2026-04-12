@@ -1,3 +1,5 @@
+// Package downloading 实现 Twitter 特定的下载业务逻辑。
+// 依赖 downloader 包提供的基础设施，处理推文媒体下载、用户/列表同步等业务功能。
 package downloading
 
 import (
@@ -18,7 +20,10 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/panjf2000/ants/v2"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 	"github.com/unkmonster/tmd/internal/database"
+	"github.com/unkmonster/tmd/internal/downloader"
+	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
 )
@@ -41,28 +46,20 @@ func (pt TweetInDir) GetPath() string {
 	return pt.path
 }
 
-var mutex sync.Mutex
-
 // saveTweetJson 将推文完整信息保存为格式化 JSON 文件到 .loongtweet 子目录
 // 独立于 downloadTweetMedia，确保即使下载失败也能记录推文信息
-func saveTweetJson(dir string, tweet *twitter.Tweet) {
-	if dir == "" || tweet == nil || tweet.Creator == nil {
+func saveTweetJson(dir string, tweet *twitter.Tweet, namingObj *naming.TweetNaming) {
+	if dir == "" || tweet == nil {
 		return
 	}
 
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Errorln("✗ panic -", "saveTweetJson panic recovered:", r)
-			}
-		}()
+		defer utils.RecoverWithLog("saveTweetJson")
 
 		loongDir := filepath.Join(dir, ".loongtweet")
 		os.MkdirAll(loongDir, 0755)
 
-		// 使用统一的文件名生成函数
-		jsonFileName := utils.TweetFileName(tweet.Text, tweet.Id, ".json")
-		jsonPath, err := utils.UniquePath(filepath.Join(loongDir, jsonFileName))
+		jsonPath, err := namingObj.FilePath(loongDir, ".json")
 		if err != nil {
 			return
 		}
@@ -89,38 +86,68 @@ func saveTweetJson(dir string, tweet *twitter.Tweet) {
 
 // saveLoongTweet 保存推文文本到 .loongtweet 子目录（人类可读的txt格式）
 // 与 saveTweetJson 同时生成，提供简洁的文本格式便于阅读
-func saveLoongTweet(dir string, tweet *twitter.Tweet) {
-	if dir == "" || tweet == nil || tweet.Creator == nil {
+// 数据来源统一：RawJSON 存在时完全从中提取，否则使用 tweet 结构体字段
+func saveLoongTweet(dir string, tweet *twitter.Tweet, namingObj *naming.TweetNaming) {
+	if dir == "" || tweet == nil {
 		return
 	}
 
 	go func() {
-		// 捕获 goroutine 内部可能产生的 panic，防止整个程序崩溃
-		defer func() {
-			if r := recover(); r != nil {
-				log.WithField("panic", r).Error("saveLoongTweet panic recovered")
-			}
-		}()
+		defer utils.RecoverWithLog("saveLoongTweet")
 
 		loongDir := filepath.Join(dir, ".loongtweet")
 		os.MkdirAll(loongDir, 0755)
 
-		// 使用统一的文件名生成函数
-		txtFileName := utils.TweetFileName(tweet.Text, tweet.Id, ".txt")
-		txtPath, err := utils.UniquePath(filepath.Join(loongDir, txtFileName))
+		txtPath, err := namingObj.FilePath(loongDir, ".txt")
 		if err != nil {
 			return
 		}
 
+		var screenName, text string
+		var tweetID uint64
+		var createdAt time.Time
+		var mediaCount int
+
+		if tweet.RawJSON != "" {
+			result := gjson.Parse(tweet.RawJSON)
+			tweetID = result.Get("rest_id").Uint()
+			if createdAtStr := result.Get("legacy.created_at").String(); createdAtStr != "" {
+				createdAt, _ = time.Parse(time.RubyDate, createdAtStr)
+			}
+			noteText := result.Get("note_tweet.note_tweet_results.result.text").String()
+			if noteText != "" {
+				text = noteText
+			} else {
+				text = result.Get("legacy.full_text").String()
+			}
+			screenName = result.Get("core.user_results.result.legacy.screen_name").String()
+			if screenName == "" {
+				screenName = "unknown"
+			}
+			if media := result.Get("legacy.extended_entities.media"); media.Exists() {
+				mediaCount = len(media.Array())
+			}
+		} else {
+			tweetID = tweet.Id
+			createdAt = tweet.CreatedAt
+			text = tweet.Text
+			if tweet.Creator != nil && tweet.Creator.ScreenName != "" {
+				screenName = tweet.Creator.ScreenName
+			} else {
+				screenName = "unknown"
+			}
+			mediaCount = len(tweet.Urls)
+		}
+
 		txtContent := fmt.Sprintf("time:%s\nurl:https://x.com/%s/status/%d\nmedia:%d\n\n%s",
-			tweet.CreatedAt.Format("2006-01-02T15:04:05"),
-			tweet.Creator.ScreenName,
-			tweet.Id,
-			len(tweet.Urls),
-			tweet.Text)
+			createdAt.Format("2006-01-02T15:04:05"),
+			screenName,
+			tweetID,
+			mediaCount,
+			text)
 
 		if err := os.WriteFile(txtPath, []byte(txtContent), 0645); err == nil {
-			os.Chtimes(txtPath, time.Time{}, tweet.CreatedAt)
+			os.Chtimes(txtPath, time.Time{}, createdAt)
 		}
 	}()
 }
@@ -213,55 +240,68 @@ func cleanMediaRecursive(data any) {
 }
 
 // 任何一个 url 下载失败直接返回
-// TODO: 要么全做，要么不做
 // skipLoongTweet: 如果为 true，不生成 .loongtweet 文件（用于恢复下载）
-func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, tweet *twitter.Tweet, skipLoongTweet bool) error {
-	// 保存推文完整信息到 .loongtweet 子目录（仅在非恢复下载时生成）
+func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, tweet *twitter.Tweet, skipLoongTweet bool, dwn downloader.Downloader) error {
+	var creatorTitle string
+	if tweet.Creator != nil {
+		creatorTitle = tweet.Creator.Title()
+	} else {
+		creatorTitle = "unknown"
+	}
+	tweetNaming := naming.NewTweetNaming(tweet.Text, tweet.Id, creatorTitle)
+
+	// 保存推文 JSON 和 TXT
 	if !skipLoongTweet {
-		saveTweetJson(dir, tweet)  // JSON格式（完整数据）
-		saveLoongTweet(dir, tweet) // TXT格式（人类可读）
+		saveTweetJson(dir, tweet, tweetNaming)
+		saveLoongTweet(dir, tweet, tweetNaming)
 	}
 
+	// 构建批量下载请求
+	reqs := make([]downloader.DownloadRequest, 0, len(tweet.Urls))
 	for _, u := range tweet.Urls {
 		ext, err := utils.GetExtFromUrl(u)
 		if err != nil {
 			return err
 		}
 
-		var resp *resty.Response
-		if strings.Contains(u, "tweet_video") || strings.Contains(u, "video.twimg.com") {
-			resp, err = client.R().SetContext(ctx).Get(u)
-		} else {
-			resp, err = client.R().SetContext(ctx).SetQueryParam("name", "4096x4096").Get(u)
-		}
+		path, err := tweetNaming.FilePath(dir, ext)
 		if err != nil {
 			return err
 		}
 
-		mutex.Lock()
-		// 使用统一的文件名生成函数
-		fileName := utils.TweetFileName(tweet.Text, tweet.Id, ext)
-		path, err := utils.UniquePath(filepath.Join(dir, fileName))
-		if err != nil {
-			mutex.Unlock()
-			return err
-		}
-		file, err := os.Create(path)
-		mutex.Unlock()
-		if err != nil {
-			return err
+		queryParams := make(map[string]string)
+		if !strings.Contains(u, "tweet_video") && !strings.Contains(u, "video.twimg.com") {
+			queryParams["name"] = "4096x4096"
 		}
 
-		defer os.Chtimes(path, time.Time{}, tweet.CreatedAt)
-		defer file.Close()
+		reqs = append(reqs, downloader.DownloadRequest{
+			Context:     ctx,
+			Client:      client,
+			URL:         u,
+			Destination: path,
+			Options: downloader.DownloadOptions{
+				QueryParams:   queryParams,
+				SkipUnchanged: false,
+				CreateVersion: false,
+				SetModTime:    &tweet.CreatedAt,
+			},
+		})
+	}
 
-		_, err = file.Write(resp.Body())
-		if err != nil {
-			return err
+	// 批量下载
+	results, err := dwn.BatchDownload(ctx, reqs)
+	if err != nil {
+		return err
+	}
+
+	// 检查结果
+	for _, result := range results {
+		if !result.Success && !result.Skipped {
+			return result.Error
 		}
 	}
 
-	fmt.Printf("%s %s\n", color.FgLightMagenta.Render("["+tweet.Creator.Title()+"]"), utils.WinFileName(tweet.Text))
+	fmt.Printf("%s\n", color.FgLightMagenta.Render(tweetNaming.LogFormat()))
 	return nil
 }
 
@@ -279,6 +319,7 @@ type workerConfig struct {
 	wg             *sync.WaitGroup
 	cancel         context.CancelCauseFunc
 	skipLoongTweet bool // 恢复下载时不生成 .loongtweet 文件
+	downloader     downloader.Downloader
 }
 
 // 负责下载推文，保证 tweet chan 内的推文要么下载成功，要么推送至 error chan
@@ -326,10 +367,13 @@ func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- Pa
 						parentDir := tie.Entity.ParentDir()
 						if parentDir != "" {
 							// 使用 Creator.Name 和 Creator.ScreenName 构建目录名
-							userDirName := utils.WinFileName(tweet.Creator.Title())
+							userNaming := naming.NewUserNaming(tweet.Creator.Name, tweet.Creator.ScreenName)
+							userDirName := userNaming.SanitizedTitle()
 							userDir := filepath.Join(parentDir, userDirName)
-							saveTweetJson(userDir, tweet)  // JSON格式（完整数据）
-							saveLoongTweet(userDir, tweet) // TXT格式（人类可读）
+							// 创建推文命名对象用于保存文件
+							tweetNaming := naming.NewTweetNaming(tweet.Text, tweet.Id, tweet.Creator.Title())
+							saveTweetJson(userDir, tweet, tweetNaming)  // JSON格式（完整数据）
+							saveLoongTweet(userDir, tweet, tweetNaming) // TXT格式（人类可读）
 						}
 					}
 				}
@@ -337,7 +381,7 @@ func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- Pa
 			errch <- pt
 			continue
 		}
-		err := downloadTweetMedia(config.ctx, client, path, pt.GetTweet(), config.skipLoongTweet)
+		err := downloadTweetMedia(config.ctx, client, path, pt.GetTweet(), config.skipLoongTweet, config.downloader)
 		// 403: Dmcaed
 		if err != nil && !utils.IsStatusCode(err, 404) && !utils.IsStatusCode(err, 403) {
 			errch <- pt
@@ -352,7 +396,7 @@ func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- Pa
 
 // 批量下载推文并返回下载失败的推文，可以保证推文被成功下载或被返回
 // skipLoongTweet: 如果为 true，不生成 .loongtweet 文件（用于恢复下载）
-func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTweet bool, pts ...PackgedTweet) []PackgedTweet {
+func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTweet bool, dwn downloader.Downloader, pts ...PackgedTweet) []PackgedTweet {
 	if len(pts) == 0 {
 		return nil
 	}
@@ -374,6 +418,7 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 		cancel:         cancel,
 		wg:             &wg,
 		skipLoongTweet: skipLoongTweet,
+		downloader:     dwn,
 	}
 	for i := 0; i < numRoutine; i++ {
 		wg.Add(1)
@@ -439,7 +484,7 @@ func getTweetAndUpdateLatestReleaseTime(ctx context.Context, client *resty.Clien
 	return tweets, nil
 }
 
-func DownloadUser(ctx context.Context, db *sqlx.DB, client *resty.Client, user *twitter.User, dir string) ([]PackgedTweet, error) {
+func DownloadUser(ctx context.Context, db *sqlx.DB, client *resty.Client, user *twitter.User, dir string, dwn downloader.Downloader) ([]PackgedTweet, error) {
 	if user.Blocking || user.Muting {
 		return nil, nil
 	}
@@ -467,14 +512,15 @@ func DownloadUser(ctx context.Context, db *sqlx.DB, client *resty.Client, user *
 	}
 
 	// 正常下载，生成 .loongtweet 文件（skipLoongTweet=false）
-	return BatchDownloadTweet(ctx, client, false, pts...), nil
+	return BatchDownloadTweet(ctx, client, false, dwn, pts...), nil
 }
 
 func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string) (*UserEntity, error) {
 	if err := syncUser(db, user); err != nil {
 		return nil, err
 	}
-	expectedTitle := utils.WinFileName(user.Title())
+	userNaming := naming.NewUserNaming(user.Name, user.ScreenName)
+	expectedTitle := userNaming.SanitizedTitle()
 
 	entity, err := NewUserEntity(db, user.Id, dir)
 	if err != nil {
@@ -496,11 +542,8 @@ func (pt TweetInEntity) GetTweet() *twitter.Tweet {
 }
 
 func (pt TweetInEntity) GetPath() string {
-	// 使用 defer/recover 捕获 Path() 可能产生的 panic
 	defer func() {
-		if r := recover(); r != nil {
-			// Path() panic 时返回空字符串
-		}
+		recover()
 	}()
 
 	path, err := pt.Entity.Path()
@@ -542,7 +585,7 @@ func shouldIngoreUser(user *twitter.User) bool {
 	return user.Blocking || user.Muting
 }
 
-func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, users []userInLstEntity, dir string, autoFollow bool, additional []*resty.Client) ([]*TweetInEntity, error) {
+func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, users []userInLstEntity, dir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader) ([]*TweetInEntity, error) {
 	if len(users) == 0 {
 		return nil, nil
 	}
@@ -775,9 +818,10 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 
 	// launch worker
 	config := workerConfig{
-		ctx:    ctx,
-		wg:     &conswg,
-		cancel: cancel,
+		ctx:        ctx,
+		wg:         &conswg,
+		cancel:     cancel,
+		downloader: dwn,
 	}
 	for i := 0; i < MaxDownloadRoutine; i++ {
 		conswg.Add(1)
@@ -840,7 +884,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	return fails, context.Cause(ctx)
 }
 
-func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, autoFollow bool, additional []*resty.Client) ([]*TweetInEntity, error) {
+func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader) ([]*TweetInEntity, error) {
 	expectedTitle := utils.WinFileName(list.Title())
 	entity, err := NewListEntity(db, list.GetId(), dir)
 	if err != nil {
@@ -862,7 +906,7 @@ func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list t
 		packgedUsers[i] = userInLstEntity{user: user, leid: &eid}
 	}
 	// 列表下载时，强制启用自动关注
-	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, true, additional)
+	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, true, additional, dwn)
 }
 
 func syncList(db *sqlx.DB, list *twitter.List) error {
@@ -876,14 +920,14 @@ func syncList(db *sqlx.DB, list *twitter.List) error {
 	return database.UpdateLst(db, &database.Lst{Id: list.Id, Name: list.Name, OwnerId: list.Creator.Id})
 }
 
-func DownloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, autoFollow bool, additional []*resty.Client) ([]*TweetInEntity, error) {
+func DownloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader) ([]*TweetInEntity, error) {
 	tlist, ok := list.(*twitter.List)
 	if ok {
 		if err := syncList(db, tlist); err != nil {
 			return nil, err
 		}
 	}
-	return downloadList(ctx, client, db, list, dir, realDir, autoFollow, additional)
+	return downloadList(ctx, client, db, list, dir, realDir, autoFollow, additional, dwn)
 }
 
 func syncLstAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB, lst twitter.ListBase, dir string) ([]userInLstEntity, error) {
@@ -928,7 +972,7 @@ func syncLstAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB
 	return packgedUsers, nil
 }
 
-func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, lists []twitter.ListBase, users []*twitter.User, dir string, realDir string, autoFollow bool, additional []*resty.Client) ([]*TweetInEntity, error) {
+func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, lists []twitter.ListBase, users []*twitter.User, dir string, realDir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader) ([]*TweetInEntity, error) {
 	log.Debugln("start collecting users")
 	packgedUsers := make([]userInLstEntity, 0)
 	wg := sync.WaitGroup{}
@@ -960,7 +1004,7 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 	}
 
 	log.Debugln("collected users:", len(packgedUsers))
-	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, autoFollow, additional)
+	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, autoFollow, additional, dwn)
 }
 
 // MarkedUserInfo 标记用户为已下载的结果信息
@@ -1090,7 +1134,7 @@ func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User, dir string, timesta
 		if r := recover(); r != nil {
 			info.Success = false
 			info.Error = fmt.Sprintf("panic: %v", r)
-			log.Errorln("✗", user.Title(), "-", "panic in markSingleUserWithInfo:", r)
+			log.Errorf("[markSingleUserWithInfo] panic recovered: %v", r)
 		}
 	}()
 

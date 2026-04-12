@@ -338,3 +338,65 @@ func TestSetConsoleTitle(t *testing.T) {
 		t.Errorf("title = %s, want hello", title)
 	}
 }
+
+func TestWinFileNameWithMaxLen(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		maxLen   int
+		expected string
+	}{
+		{
+			name:     "short text within limit",
+			input:    "hello",
+			maxLen:   10,
+			expected: "hello",
+		},
+		{
+			name:     "text exceeds limit",
+			input:    "hello world this is a long text",
+			maxLen:   10,
+			expected: "hello worl",
+		},
+		{
+			name:     "zero maxLen",
+			input:    "hello",
+			maxLen:   0,
+			expected: "",
+		},
+		{
+			name:     "negative maxLen",
+			input:    "hello",
+			maxLen:   -1,
+			expected: "",
+		},
+		{
+			name:     "special chars with limit",
+			input:    "file<name>:test",
+			maxLen:   10,
+			expected: "filenamete",
+		},
+		{
+			name:     "newline handling with limit",
+			input:    "hello\nworld",
+			maxLen:   8,
+			expected: "hello wo",
+		},
+		{
+			name:     "unicode text with limit",
+			input:    "比基尼测试文本",
+			maxLen:   10,
+			expected: "比基尼",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := WinFileNameWithMaxLen(tt.input, tt.maxLen)
+			if got != tt.expected {
+				t.Errorf("WinFileNameWithMaxLen(%q, %d) = %q; want %q",
+					tt.input, tt.maxLen, got, tt.expected)
+			}
+		})
+	}
+}

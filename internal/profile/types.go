@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/go-resty/resty/v2"
 )
 
 // ProfileInfo 用户资料信息
@@ -128,6 +130,7 @@ type Fetcher interface {
 	FetchProfile(ctx context.Context, screenName string) (*ProfileInfo, error)
 	FetchAvatar(ctx context.Context, url string) ([]byte, error)
 	FetchBanner(ctx context.Context, url string) ([]byte, string, error)
+	Client() *resty.Client
 }
 
 // ProfileError 自定义错误类型

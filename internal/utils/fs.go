@@ -38,34 +38,31 @@ func PathExists(path string) (bool, error) {
 // NTFS 单个文件名硬限制为 255 字符（与长路径设置无关）
 const DefaultMaxFileNameLen = 155
 
-// 可配置的文件名长度限制（可在 main.go 中修改）
-var MaxFileNameLen = DefaultMaxFileNameLen
-
-// 将无后缀的文件名更新为有效的 Windows 文件名
+// WinFileName 将无后缀的文件名更新为有效的 Windows 文件名
+// 使用 DefaultMaxFileNameLen 作为默认长度限制
 func WinFileName(name string) string {
-	// 将字节切片转换为字符串
-	// 使用正则表达式进行替换
+	return WinFileNameWithMaxLen(name, DefaultMaxFileNameLen)
+}
+
+// WinFileNameWithMaxLen 将无后缀的文件名更新为有效的 Windows 文件名
+// maxLen 指定最大文件名长度
+func WinFileNameWithMaxLen(name string, maxLen int) string {
 	name = reUrl.ReplaceAllString(name, "")
 	name = reWinNonSupport.ReplaceAllString(name, "")
 
-	// 创建一个缓冲区，避免多次分配
 	var buffer bytes.Buffer
 
-	// 遍历字符串，对字符进行处理
 	for _, ch := range name {
 		switch ch {
 		case '\r':
-			// 跳过 \r
 			continue
 		case '\n':
-			// 将 \n 替换为空格
-			if buffer.Len()+1 > MaxFileNameLen {
+			if buffer.Len()+1 > maxLen {
 				break
 			}
 			buffer.WriteRune(' ')
 		default:
-			// 其他字符直接添加到缓冲区
-			if buffer.Len()+utf8.RuneLen(ch) > MaxFileNameLen {
+			if buffer.Len()+utf8.RuneLen(ch) > maxLen {
 				break
 			}
 			buffer.WriteRune(ch)
@@ -107,48 +104,6 @@ func UniquePath(path string) (string, error) {
 
 		path = filepath.Join(dir, stem+"(1)"+ext)
 	}
-}
-
-// TweetFileName 生成统一的推文相关文件名
-// 格式: { sanitized_text }_{ tweet_id }(序号).{ ext }
-// 参数:
-//   - text: 推文文本
-//   - tweetId: 推文ID
-//   - ext: 文件扩展名(包含点, 如 ".json", ".jpg")
-// 返回:
-//   - 基础文件名(不含序号)
-// 命名规则:
-//   1. 文本经过 WinFileName 清理
-//   2. 完整文本(受MaxFileNameLen限制) + _ + tweet_id
-//   3. 如果超长,优先截断文本,保留完整ID
-//   4. 使用 UniquePath 添加序号(1), (2)等
-// 示例:
-//   TweetFileName("比基尼", 1355100264760393735, ".jpg") -> "比基尼_1355100264760393735.jpg"
-func TweetFileName(text string, tweetId uint64, ext string) string {
-	// 清理文本
-	sanitizedText := WinFileName(text)
-
-	// 构建ID部分
-	idPart := fmt.Sprintf("_%d", tweetId)
-
-	// 计算可用文本长度(预留5字节给序号(1))
-	maxTextLen := MaxFileNameLen - len(idPart) - len(ext) - 5
-	if maxTextLen < 0 {
-		maxTextLen = 0
-	}
-
-	// 截断文本(如果超长)
-	if len(sanitizedText) > maxTextLen {
-		sanitizedText = sanitizedText[:maxTextLen]
-	}
-
-	// 如果文本为空,使用默认值
-	if sanitizedText == "" {
-		sanitizedText = "tweet"
-	}
-
-	// 组合文件名
-	return sanitizedText + idPart + ext
 }
 
 func GetExtFromUrl(u string) (string, error) {

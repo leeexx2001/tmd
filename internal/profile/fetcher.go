@@ -140,6 +140,25 @@ func (tf *TwitterFetcher) selectAvailableClient(ctx context.Context) *resty.Clie
 	return nil
 }
 
+// Client 返回可用的 HTTP 客户端
+func (tf *TwitterFetcher) Client() *resty.Client {
+	tf.mu.Lock()
+	defer tf.mu.Unlock()
+
+	// 返回第一个可用的客户端
+	for _, client := range tf.clients {
+		if twitter.GetClientError(client) == nil {
+			return client
+		}
+	}
+
+	// 如果没有可用客户端，返回第一个
+	if len(tf.clients) > 0 {
+		return tf.clients[0]
+	}
+	return nil
+}
+
 func parseProfileFromResponse(data []byte) (*ProfileInfo, error) {
 	user := gjson.GetBytes(data, "data.user")
 	if !user.Exists() {

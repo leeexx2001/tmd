@@ -38,13 +38,13 @@ func NewFileStorageManager(usersBasePath string) (*FileStorageManager, error) {
 	return &FileStorageManager{usersBasePath: usersBasePath}, nil
 }
 
-func (fsm *FileStorageManager) getUserProfilePath(userTitle string, screenName string) string {
-	safeTitle := utils.WinFileName(userTitle)
-	return filepath.Join(fsm.usersBasePath, safeTitle, profileDirName, profileSubDirName)
+func (fsm *FileStorageManager) getUserProfilePath(userTitle string) string {
+	// userTitle 已经在外部清理过，直接使用
+	return filepath.Join(fsm.usersBasePath, userTitle, profileDirName, profileSubDirName)
 }
 
-func (fsm *FileStorageManager) EnsureDirectory(userTitle string, screenName string) (string, error) {
-	profilePath := fsm.getUserProfilePath(userTitle, screenName)
+func (fsm *FileStorageManager) EnsureDirectory(userTitle string) (string, error) {
+	profilePath := fsm.getUserProfilePath(userTitle)
 
 	if err := os.MkdirAll(profilePath, 0755); err != nil {
 		return "", fmt.Errorf("failed to create user profile directory: %w", err)
@@ -58,8 +58,8 @@ func (fsm *FileStorageManager) EnsureDirectory(userTitle string, screenName stri
 	return profilePath, nil
 }
 
-func (fsm *FileStorageManager) GetFilePath(userTitle string, screenName string, fileType FileType) string {
-	profilePath := fsm.getUserProfilePath(userTitle, screenName)
+func (fsm *FileStorageManager) GetFilePath(userTitle string, fileType FileType) string {
+	profilePath := fsm.getUserProfilePath(userTitle)
 
 	switch fileType {
 	case FileTypeAvatar:
@@ -75,8 +75,8 @@ func (fsm *FileStorageManager) GetFilePath(userTitle string, screenName string, 
 	}
 }
 
-func (fsm *FileStorageManager) GetFilePathWithExt(userTitle string, screenName string, fileType FileType, ext string) string {
-	profilePath := fsm.getUserProfilePath(userTitle, screenName)
+func (fsm *FileStorageManager) GetFilePathWithExt(userTitle string, fileType FileType, ext string) string {
+	profilePath := fsm.getUserProfilePath(userTitle)
 
 	switch fileType {
 	case FileTypeAvatar:
@@ -86,17 +86,17 @@ func (fsm *FileStorageManager) GetFilePathWithExt(userTitle string, screenName s
 		filename := "banner" + ext
 		return filepath.Join(profilePath, filename)
 	default:
-		return fsm.GetFilePath(userTitle, screenName, fileType)
+		return fsm.GetFilePath(userTitle, fileType)
 	}
 }
 
-func (fsm *FileStorageManager) GetVersionPath(userTitle string, screenName string, fileType FileType, timestamp time.Time) string {
+func (fsm *FileStorageManager) GetVersionPath(userTitle string, fileType FileType, timestamp time.Time) string {
 	ext := getFileExtension(fileType)
-	return fsm.GetVersionPathWithExt(userTitle, screenName, fileType, timestamp, ext)
+	return fsm.GetVersionPathWithExt(userTitle, fileType, timestamp, ext)
 }
 
-func (fsm *FileStorageManager) GetVersionPathWithExt(userTitle string, screenName string, fileType FileType, timestamp time.Time, ext string) string {
-	profilePath := fsm.getUserProfilePath(userTitle, screenName)
+func (fsm *FileStorageManager) GetVersionPathWithExt(userTitle string, fileType FileType, timestamp time.Time, ext string) string {
+	profilePath := fsm.getUserProfilePath(userTitle)
 	versionsDir := filepath.Join(profilePath, versionsDirName)
 
 	timestampStr := timestamp.Format("20060102_150405")
@@ -131,9 +131,9 @@ func (fsm *FileStorageManager) FileExists(path string) (bool, FileInfo, error) {
 	}, nil
 }
 
-func (fsm *FileStorageManager) CreateVersion(userTitle string, screenName string, fileType FileType, sourcePath string) (string, error) {
+func (fsm *FileStorageManager) CreateVersion(userTitle string, fileType FileType, sourcePath string) (string, error) {
 	ext := filepath.Ext(sourcePath)
-	versionPath := fsm.GetVersionPathWithExt(userTitle, screenName, fileType, time.Now(), ext)
+	versionPath := fsm.GetVersionPathWithExt(userTitle, fileType, time.Now(), ext)
 
 	if err := utils.CopyFile(sourcePath, versionPath); err != nil {
 		return "", fmt.Errorf("failed to create version backup: %w", err)
@@ -142,6 +142,8 @@ func (fsm *FileStorageManager) CreateVersion(userTitle string, screenName string
 	return versionPath, nil
 }
 
+// AtomicWrite 原子写入文件
+// Deprecated: 使用 github.com/unkmonster/tmd/internal/downloader.FileWriter 替代
 func (fsm *FileStorageManager) AtomicWrite(filePath string, data []byte) error {
 	dir := filepath.Dir(filePath)
 	tempFile, err := os.CreateTemp(dir, ".tmp_*")
@@ -168,6 +170,8 @@ func (fsm *FileStorageManager) AtomicWrite(filePath string, data []byte) error {
 	return nil
 }
 
+// ComputeFileHash 计算文件 Hash
+// Deprecated: 使用 github.com/unkmonster/tmd/internal/downloader.FileWriter 替代
 func (fsm *FileStorageManager) ComputeFileHash(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -177,6 +181,8 @@ func (fsm *FileStorageManager) ComputeFileHash(path string) (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
+// ComputeDataHash 计算数据 Hash
+// Deprecated: 使用 github.com/unkmonster/tmd/internal/downloader.FileWriter 替代
 func ComputeDataHash(data []byte) string {
 	hash := md5.Sum(data)
 	return hex.EncodeToString(hash[:])
