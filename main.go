@@ -15,21 +15,24 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/gookit/color"
 	"github.com/jmoiron/sqlx"
+	"github.com/natefinch/lumberjack"
 	"github.com/rifflock/lfshook"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/downloading"
+	"github.com/unkmonster/tmd/internal/profile"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
 	"gopkg.in/yaml.v3"
 )
 
 type Cookie struct {
-	AuthCoken string `yaml:"auth_token"`
+	AuthToken string `yaml:"auth_token"`
 	Ct0       string `yaml:"ct0"`
 }
 
@@ -37,6 +40,7 @@ type Config struct {
 	RootPath           string `yaml:"root_path"`
 	Cookie             Cookie `yaml:"cookie"`
 	MaxDownloadRoutine int    `yaml:"max_download_routine"`
+	MaxFileNameLen     int    `yaml:"max_file_name_len"` // 文件名长度限制（0=使用默认值250）
 }
 
 type userArgs struct {
@@ -208,8 +212,10 @@ func newStorePath(root string) (*storePath, error) {
 
 func initLogger(dbg bool, logFile io.Writer) {
 	log.SetFormatter(&log.TextFormatter{
-		ForceColors:   true,
-		FullTimestamp: true,
+		ForceColors:    true,
+		FullTimestamp:  true,
+		DisableSorting: true,
+		PadLevelText:   false,
 	})
 
 	if dbg {
@@ -230,14 +236,24 @@ func main() {
 	var dbg bool
 	var autoFollow bool
 	var noRetry bool
+	var markDownloaded bool
+	var markTime string
+	var noProfile bool
+	var profileUsers userArgs
+	var profileList ListArgs
 
 	flag.BoolVar(&confArg, "conf", false, "reconfigure")
 	flag.Var(&usrArgs, "user", "download tweets from the user specified by user_id/screen_name since the last download")
 	flag.Var(&listArgs, "list", "batch download each member from list specified by list_id")
 	flag.Var(&follArgs, "foll", "batch download each member followed by the user specified by user_id/screen_name")
 	flag.BoolVar(&dbg, "dbg", false, "display debug message")
-	flag.BoolVar(&autoFollow, "auto-follow", false, "send follow request automatically to protected users")
+	flag.BoolVar(&autoFollow, "auto-follow", false, "send follow request automatically to protected users (enabled by default for list downloads)")
 	flag.BoolVar(&noRetry, "no-retry", false, "quickly exit without retrying failed tweets")
+	flag.BoolVar(&markDownloaded, "mark-downloaded", false, "mark users as downloaded without downloading content (sets latest_release_time to now)")
+	flag.StringVar(&markTime, "mark-time", "", "timestamp for mark-downloaded (format: 2006-01-02T15:04:05), empty means now")
+	flag.BoolVar(&noProfile, "noprofile", false, "skip downloading user profiles")
+	flag.Var(&profileUsers, "profile-user", "download profile for specified user (can be used multiple times)")
+	flag.Var(&profileList, "profile-list", "download profiles for all members in the specified list")
 	flag.Parse()
 
 	var err error
@@ -264,13 +280,16 @@ func main() {
 		log.Fatalln("failed to make app dir", err)
 	}
 
-	// init logger
-	logFile, err := os.OpenFile(logPath, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
-	if err != nil {
-		log.Fatalln("failed to create log file:", err)
+	// init logger with rotation (使用 lumberjack，参考 TMD 控制器: 5MB max, 2 backups)
+	logWriter := &lumberjack.Logger{
+		Filename:   logPath,
+		MaxSize:    5, // 5MB
+		MaxBackups: 2,
+		MaxAge:     7, // 保留7天
+		Compress:   false,
 	}
-	defer logFile.Close()
-	initLogger(dbg, logFile)
+	defer logWriter.Close()
+	initLogger(dbg, logWriter)
 
 	// report at exit
 	defer func() {
@@ -298,6 +317,17 @@ func main() {
 	if conf.MaxDownloadRoutine > 0 {
 		downloading.MaxDownloadRoutine = conf.MaxDownloadRoutine
 	}
+	// 设置文件名长度限制（范围：50-250，0=使用默认值）
+	if conf.MaxFileNameLen > 0 {
+		if conf.MaxFileNameLen < 50 {
+			conf.MaxFileNameLen = 50 // 最小限制，避免文件名过短
+		}
+		if conf.MaxFileNameLen > 250 {
+			conf.MaxFileNameLen = 250 // 最大限制，Windows 安全值
+		}
+		utils.MaxFileNameLen = conf.MaxFileNameLen
+		log.Infoln("max file name length set to:", utils.MaxFileNameLen)
+	}
 
 	// ensure store path exist
 	pathHelper, err := newStorePath(conf.RootPath)
@@ -306,7 +336,7 @@ func main() {
 	}
 
 	// sign in
-	client, screenName, err := twitter.Login(ctx, conf.Cookie.AuthCoken, conf.Cookie.Ct0)
+	client, screenName, err := twitter.Login(ctx, conf.Cookie.AuthToken, conf.Cookie.Ct0)
 	if err != nil {
 		log.Fatalln("failed to login:", err)
 	}
@@ -388,16 +418,64 @@ func main() {
 		}
 	}()
 
-	// do job
+	// do job - 推文下载先执行
 	if len(task.users) == 0 && len(task.lists) == 0 {
-		return
+		// 没有推文下载任务，直接执行 profile 下载（如果有）
+		goto handleProfile
 	}
 	log.Infoln("start working for...")
 	printTask(task)
 
-	todump, err = downloading.BatchDownloadAny(ctx, client, db, task.lists, task.users, pathHelper.root, pathHelper.users, autoFollow, addtional)
-	if err != nil {
-		log.Errorln("failed to download:", err)
+	// 如果指定了 --mark-downloaded，只更新数据库时间戳，不下载内容
+	if markDownloaded {
+		results, err := downloading.MarkUsersAsDownloaded(ctx, client, db, task.lists, task.users, pathHelper.users, markTime)
+		if err != nil {
+			log.Errorln("failed to mark users as downloaded:", err)
+			os.Exit(1)
+		}
+		// 输出结果供外部程序解析（JSON格式）
+		if len(results) > 0 {
+			fmt.Println("\n=== MARK_DOWNLOADED_RESULTS ===")
+			for _, r := range results {
+				status := "OK"
+				if !r.Success {
+					status = "FAIL"
+				}
+				fmt.Printf("ENTITY_ID:%d|USER_ID:%d|SCREEN_NAME:%s|STATUS:%s\n", r.EntityID, r.UserID, r.ScreenName, status)
+			}
+			fmt.Println("=== END_RESULTS ===")
+		}
+	} else {
+		todump, err = downloading.BatchDownloadAny(ctx, client, db, task.lists, task.users, pathHelper.root, pathHelper.users, autoFollow, addtional)
+		if err != nil {
+			log.Errorln("failed to download:", err)
+		}
+	}
+
+handleProfile:
+	// handle profile download - 推文下载完成后执行
+	// 默认下载profile，除非指定 --noprofile
+	// Profile 下载使用独立的 context，不影响推文下载的速率限制状态
+	shouldDownloadProfile := !noProfile && (len(usrArgs.screenName) > 0 || len(listArgs.id) > 0 || len(follArgs.screenName) > 0)
+
+	if shouldDownloadProfile || len(profileUsers.screenName) > 0 || len(profileList.id) > 0 {
+		profileCtx, profileCancel := context.WithCancel(context.Background())
+		profileDone := make(chan struct{})
+		go func() {
+			defer close(profileDone)
+			// skipAPIFetch = shouldDownloadProfile，因为从推文下载中已经获取了用户数据
+			handleProfileDownload(profileCtx, client, addtional, pathHelper.users, profileUsers, profileList, task, db, shouldDownloadProfile)
+		}()
+		// 等待 profile 下载完成或主 context 被取消
+		select {
+		case <-profileDone:
+			// profile 下载完成
+		case <-ctx.Done():
+			// 主 context 被取消，取消 profile 下载
+			profileCancel()
+			<-profileDone
+		}
+		profileCancel()
 	}
 }
 
@@ -406,8 +484,10 @@ func setClientLogger(client *resty.Client, out io.Writer) {
 	logger.SetLevel(log.InfoLevel)
 	logger.SetOutput(out)
 	logger.SetFormatter(&log.TextFormatter{
-		FullTimestamp: true,
-		DisableQuote:  true,
+		FullTimestamp:  true,
+		DisableQuote:   true,
+		DisableSorting: true,
+		PadLevelText:   false,
 	})
 	client.SetLogger(logger)
 }
@@ -467,14 +547,48 @@ func writeConf(path string, conf *Config) error {
 }
 
 func promptConfig(saveto string) (*Config, error) {
-	conf := Config{}
+	// 先尝试读取现有配置，以便保留未修改的字段
+	conf, err := readConf(saveto)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// 配置文件不存在，创建新配置
+			fmt.Println("Config file not found, creating new configuration...")
+		} else {
+			// 配置文件存在但读取失败（损坏或格式错误），备份原文件
+			backupPath := saveto + ".backup." + strconv.FormatInt(time.Now().Unix(), 10)
+			if renameErr := os.Rename(saveto, backupPath); renameErr != nil {
+				fmt.Printf("Warning: failed to read existing config (%v)\n", err)
+				fmt.Printf("Failed to backup config file: %v\n", renameErr)
+				fmt.Println("Starting fresh without backup...")
+			} else {
+				fmt.Printf("Warning: existing config file is corrupted (%v)\n", err)
+				fmt.Printf("Original config has been backed up to: %s\n", backupPath)
+				fmt.Println("Creating new configuration...")
+			}
+		}
+		conf = &Config{}
+	}
+
 	scan := bufio.NewScanner(os.Stdin)
 
-	print("enter storage dir: ")
-	scan.Scan()
-	storePath := scan.Text()
+	// 辅助函数：如果输入为空则保留原值
+	getInputOrDefault := func(prompt string, defaultValue string) string {
+		fmt.Printf("%s [%s]: ", prompt, defaultValue)
+		scan.Scan()
+		input := scan.Text()
+		if strings.TrimSpace(input) == "" {
+			return defaultValue
+		}
+		return input
+	}
+
+	// 存储目录
+	storePath := getInputOrDefault("enter storage dir", conf.RootPath)
+	if strings.TrimSpace(storePath) == "" {
+		return nil, fmt.Errorf("storage dir cannot be empty")
+	}
 	// 确保路径可用
-	err := os.MkdirAll(storePath, 0755)
+	err = os.MkdirAll(storePath, 0755)
 	if err != nil {
 		return nil, err
 	}
@@ -482,25 +596,25 @@ func promptConfig(saveto string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	conf.RootPath = storePath
 
-	print("enter auth_token: ")
-	scan.Scan()
-	conf.Cookie.AuthCoken = scan.Text()
+	// Auth Token
+	conf.Cookie.AuthToken = getInputOrDefault("enter auth_token", conf.Cookie.AuthToken)
 
-	print("enter ct0: ")
-	scan.Scan()
-	conf.Cookie.Ct0 = scan.Text()
+	// Ct0
+	conf.Cookie.Ct0 = getInputOrDefault("enter ct0", conf.Cookie.Ct0)
 
-	print("enter max download routine: ")
-	scan.Scan()
-	conf.MaxDownloadRoutine, err = strconv.Atoi(scan.Text())
-	if err != nil {
-		return nil, err
+	// Max Download Routine
+	routineStr := getInputOrDefault("enter max download routine", strconv.Itoa(conf.MaxDownloadRoutine))
+	if strings.TrimSpace(routineStr) != "" {
+		routine, err := strconv.Atoi(routineStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid max download routine: %v", err)
+		}
+		conf.MaxDownloadRoutine = routine
 	}
 
-	return &conf, writeConf(saveto, &conf)
+	return conf, writeConf(saveto, conf)
 }
 
 func retryFailedTweets(ctx context.Context, dumper *downloading.TweetDumper, db *sqlx.DB, client *resty.Client) error {
@@ -519,7 +633,8 @@ func retryFailedTweets(ctx context.Context, dumper *downloading.TweetDumper, db 
 		toretry = append(toretry, leg)
 	}
 
-	newFails := downloading.BatchDownloadTweet(ctx, client, toretry...)
+	// 恢复下载时不生成 .loongtweet 文件（skipLoongTweet=true）
+	newFails := downloading.BatchDownloadTweet(ctx, client, true, toretry...)
 	dumper.Clear()
 	for _, pt := range newFails {
 		te := pt.(*downloading.TweetInEntity)
@@ -564,7 +679,7 @@ func batchLogin(ctx context.Context, dbg bool, cookies []*Cookie, master string)
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			cli, sn, err := twitter.Login(ctx, cookie.AuthCoken, cookie.Ct0)
+			cli, sn, err := twitter.Login(ctx, cookie.AuthToken, cookie.Ct0)
 			if _, loaded := added.LoadOrStore(sn, struct{}{}); loaded {
 				msgs[index] = "    - ? repeated\n"
 				return
@@ -591,4 +706,153 @@ func batchLogin(ctx context.Context, dbg bool, cookies []*Cookie, master string)
 		fmt.Print(msg)
 	}
 	return clients
+}
+
+func handleProfileDownload(ctx context.Context, client *resty.Client, additional []*resty.Client, usersPath string, profileUsers userArgs, profileList ListArgs, task *Task, db *sqlx.DB, skipAPIFetch bool) {
+	clients := make([]*resty.Client, 0)
+	clients = append(clients, client)
+	clients = append(clients, additional...)
+
+	storage, err := profile.NewFileStorageManager(usersPath)
+	if err != nil {
+		log.Fatalln("failed to create profile storage:", err)
+	}
+
+	downloader := profile.NewProfileDownloaderWithDB(nil, storage, clients, db)
+
+	requests := make([]profile.DownloadRequest, 0)
+
+	// 首先处理 task.users（从推文下载中获取的用户数据），这样有预获取数据的用户会优先被处理
+	if len(task.users) > 0 {
+		for _, user := range task.users {
+			req := profile.DownloadRequest{
+				ScreenName: user.ScreenName,
+				UserTitle:  user.Title(), // 用于目录名: Name(ScreenName)
+				Name:       user.Name,    // 纯净的显示名称
+				UserID:     user.Id,
+			}
+			if skipAPIFetch {
+				req.AvatarURL = user.AvatarURL
+				req.BannerURL = user.BannerURL
+				req.Description = user.Description
+				req.Location = user.Location
+				req.URL = user.URL
+				req.Verified = user.Verified
+				req.Protected = user.IsProtected
+				req.CreatedAt = user.CreatedAt
+			}
+			requests = append(requests, req)
+		}
+	}
+
+	for _, screenName := range profileUsers.screenName {
+		requests = append(requests, profile.DownloadRequest{
+			ScreenName: screenName,
+			UserTitle:  "",
+			Name:       "",
+			UserID:     0,
+		})
+	}
+
+	if len(profileList.id) > 0 {
+		lists, err := profileList.GetList(ctx, client)
+		if err != nil {
+			log.WithError(err).Errorln("failed to get profile lists")
+		} else {
+			for _, lst := range lists {
+				members, err := lst.GetMembers(ctx, client)
+				if err != nil {
+					log.WithError(err).WithField("list", lst.Title()).Errorln("failed to get list members")
+					continue
+				}
+				for _, member := range members {
+					requests = append(requests, profile.DownloadRequest{
+						ScreenName:  member.ScreenName,
+						UserTitle:   member.Title(),
+						Name:        member.Name,
+						UserID:      member.Id,
+						AvatarURL:   member.AvatarURL,
+						BannerURL:   member.BannerURL,
+						Description: member.Description,
+						Location:    member.Location,
+						URL:         member.URL,
+						Verified:    member.Verified,
+						Protected:   member.IsProtected,
+						CreatedAt:   member.CreatedAt,
+					})
+				}
+			}
+		}
+	}
+
+	if len(task.lists) > 0 {
+		for _, lst := range task.lists {
+			members, err := lst.GetMembers(ctx, client)
+			if err != nil {
+				log.WithError(err).WithField("list", lst.Title()).Errorln("failed to get list members for profile")
+				continue
+			}
+			for _, member := range members {
+				requests = append(requests, profile.DownloadRequest{
+					ScreenName:  member.ScreenName,
+					UserTitle:   member.Title(),
+					Name:        member.Name,
+					UserID:      member.Id,
+					AvatarURL:   member.AvatarURL,
+					BannerURL:   member.BannerURL,
+					Description: member.Description,
+					Location:    member.Location,
+					URL:         member.URL,
+					Verified:    member.Verified,
+					Protected:   member.IsProtected,
+					CreatedAt:   member.CreatedAt,
+				})
+			}
+		}
+	}
+
+	seen := make(map[string]bool)
+	uniqueRequests := make([]profile.DownloadRequest, 0)
+	for _, req := range requests {
+		if !seen[req.ScreenName] {
+			seen[req.ScreenName] = true
+			uniqueRequests = append(uniqueRequests, req)
+		}
+	}
+
+	if len(uniqueRequests) == 0 {
+		log.Infoln("no users to download profile")
+		return
+	}
+
+	log.Infoln("starting profile download for", len(uniqueRequests), "users")
+
+	results := downloader.DownloadMultiple(ctx, uniqueRequests)
+
+	success := 0
+	failed := 0
+	skipped := 0
+	for _, r := range results {
+		if r.Success {
+			success++
+		} else if r.Error != nil {
+			failed++
+		} else {
+			skipped++
+		}
+	}
+
+	log.Infoln("profile download completed - total:", len(results), "success:", success, "failed:", failed, "skipped:", skipped)
+
+	fmt.Println("\n=== PROFILE_DOWNLOAD_RESULTS ===")
+	for _, r := range results {
+		if !r.Success {
+			status := "SKIP"
+			if r.Error != nil {
+				status = "FAIL"
+			}
+			fmt.Printf("SCREEN_NAME:%s|STATUS:%s\n", r.ScreenName, status)
+		}
+	}
+	fmt.Println("=== END_RESULTS ===")
 }

@@ -1,6 +1,8 @@
 package twitter
 
 import (
+	"fmt"
+
 	"github.com/tidwall/gjson"
 )
 
@@ -18,11 +20,19 @@ func CheckApiResp(body []byte) error {
 		return nil
 	}
 
-	codej := errors.Get("0.code")
+	codej := errors.Get("0.extensions.code")
 	code := -1
 	if codej.Exists() {
 		code = int(codej.Int())
 	}
+
+	hasData := gjson.GetBytes(body, "data").Exists()
+	if hasData {
+		if code == 214 {
+			return nil
+		}
+	}
+
 	return NewTwitterApiError(code, string(body))
 }
 
@@ -32,7 +42,18 @@ type TwitterApiError struct {
 }
 
 func (err *TwitterApiError) Error() string {
-	return err.raw
+	return fmt.Sprintf("Twitter API error (code %d): %s", err.Code, err.getMessage())
+}
+
+func (err *TwitterApiError) getMessage() string {
+	errors := gjson.Get(err.raw, "errors")
+	if errors.Exists() && len(errors.Array()) > 0 {
+		msg := errors.Get("0.message").String()
+		if msg != "" {
+			return msg
+		}
+	}
+	return "unknown error"
 }
 
 func NewTwitterApiError(code int, raw string) *TwitterApiError {

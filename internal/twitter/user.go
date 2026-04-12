@@ -28,6 +28,13 @@ type User struct {
 	MediaCount   int
 	Muting       bool
 	Blocking     bool
+	AvatarURL    string // 头像URL
+	BannerURL    string // 横幅URL
+	Description  string // 用户简介
+	Location     string // 位置
+	URL          string // 个人链接
+	Verified     bool   // 是否认证
+	CreatedAt    string // 账号创建时间
 }
 
 func GetUserById(ctx context.Context, client *resty.Client, id uint64) (*User, error) {
@@ -54,11 +61,17 @@ func getUser(ctx context.Context, client *resty.Client, url string) (*User, erro
 	if err != nil {
 		return nil, err
 	}
+	if err := CheckApiResp(resp.Body()); err != nil {
+		return nil, err
+	}
 	return parseRespJson(resp.Body())
 }
 
 func parseUserResults(user_results *gjson.Result) (*User, error) {
 	result := user_results.Get("result")
+	if !result.Exists() {
+		return nil, fmt.Errorf("user result does not exist")
+	}
 	if result.Get("__typename").String() == "UserUnavailable" {
 		return nil, fmt.Errorf("user unavaiable")
 	}
@@ -94,13 +107,44 @@ func parseUserResults(user_results *gjson.Result) (*User, error) {
 	usr.MediaCount = int(media_count.Int())
 	usr.Muting = muting.Exists() && muting.Bool()
 	usr.Blocking = blocking.Exists() && blocking.Bool()
+
+	// 从API响应中提取头像和横幅URL
+	if avatar := result.Get("avatar.image_url"); avatar.Exists() && avatar.String() != "" {
+		usr.AvatarURL = avatar.String()
+	} else if avatar := legacy.Get("profile_image_url_https"); avatar.Exists() && avatar.String() != "" {
+		usr.AvatarURL = avatar.String()
+	} else if avatar := legacy.Get("profile_image_url"); avatar.Exists() && avatar.String() != "" {
+		usr.AvatarURL = avatar.String()
+	}
+
+	if banner := legacy.Get("profile_banner_url"); banner.Exists() {
+		usr.BannerURL = banner.String()
+	}
+
+	// 提取用户简介和其他信息
+	if desc := legacy.Get("description"); desc.Exists() {
+		usr.Description = desc.String()
+	}
+	if loc := legacy.Get("location"); loc.Exists() {
+		usr.Location = loc.String()
+	}
+	if url := legacy.Get("url"); url.Exists() {
+		usr.URL = url.String()
+	}
+	if verified := legacy.Get("verified"); verified.Exists() {
+		usr.Verified = verified.Bool()
+	}
+	if created := legacy.Get("created_at"); created.Exists() {
+		usr.CreatedAt = created.String()
+	}
+
 	return &usr, nil
 }
 
 func parseRespJson(resp []byte) (*User, error) {
 	user := gjson.GetBytes(resp, "data.user")
 	if !user.Exists() {
-		return nil, fmt.Errorf("user does not exist")
+		return nil, fmt.Errorf("user does not exist or is not accessible")
 	}
 	return parseUserResults(&user)
 }

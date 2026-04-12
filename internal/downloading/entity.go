@@ -110,6 +110,14 @@ func (ue *UserEntity) Path() (string, error) {
 	return ue.record.Path(), nil
 }
 
+// ParentDir 返回实体的父目录（用于在 Path 为空时生成 .loongtweet）
+func (ue *UserEntity) ParentDir() string {
+	if ue.record == nil {
+		return ""
+	}
+	return ue.record.ParentDir
+}
+
 func (ue *UserEntity) Name() string {
 	if ue.record.Name == "" {
 		panic(fmt.Errorf("the name of user entity [%s:%d] was unset", ue.record.ParentDir, ue.record.Uid))
@@ -138,6 +146,17 @@ func (ue *UserEntity) SetLatestReleaseTime(t time.Time) error {
 	err := database.SetUserEntityLatestReleaseTime(ue.db, int(ue.record.Id.Int32), t)
 	if err == nil {
 		ue.record.LatestReleaseTime.Scan(t)
+	}
+	return err
+}
+
+func (ue *UserEntity) ClearLatestReleaseTime() error {
+	if !ue.created {
+		return fmt.Errorf("user entity [%s:%d] was not created", ue.record.ParentDir, ue.record.Uid)
+	}
+	err := database.ClearUserEntityLatestReleaseTime(ue.db, int(ue.record.Id.Int32))
+	if err == nil {
+		ue.record.LatestReleaseTime.Valid = false
 	}
 	return err
 }

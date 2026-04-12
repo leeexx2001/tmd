@@ -2,11 +2,13 @@ package downloading
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -41,10 +43,184 @@ func (pt TweetInDir) GetPath() string {
 
 var mutex sync.Mutex
 
+// saveTweetJson 将推文完整信息保存为格式化 JSON 文件到 .loongtweet 子目录
+// 独立于 downloadTweetMedia，确保即使下载失败也能记录推文信息
+func saveTweetJson(dir string, tweet *twitter.Tweet) {
+	if dir == "" || tweet == nil || tweet.Creator == nil {
+		return
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Errorln("✗ panic -", "saveTweetJson panic recovered:", r)
+			}
+		}()
+
+		loongDir := filepath.Join(dir, ".loongtweet")
+		os.MkdirAll(loongDir, 0755)
+
+		// 使用统一的文件名生成函数
+		jsonFileName := utils.TweetFileName(tweet.Text, tweet.Id, ".json")
+		jsonPath, err := utils.UniquePath(filepath.Join(loongDir, jsonFileName))
+		if err != nil {
+			return
+		}
+
+		if tweet.RawJSON == "" {
+			return
+		}
+
+		data, err := cleanTweetJson([]byte(tweet.RawJSON))
+		if err != nil {
+			return
+		}
+
+		formatted, err := json.MarshalIndent(data, "", "  ")
+		if err != nil {
+			return
+		}
+
+		if err := os.WriteFile(jsonPath, formatted, 0645); err == nil {
+			os.Chtimes(jsonPath, time.Time{}, tweet.CreatedAt)
+		}
+	}()
+}
+
+// saveLoongTweet 保存推文文本到 .loongtweet 子目录（人类可读的txt格式）
+// 与 saveTweetJson 同时生成，提供简洁的文本格式便于阅读
+func saveLoongTweet(dir string, tweet *twitter.Tweet) {
+	if dir == "" || tweet == nil || tweet.Creator == nil {
+		return
+	}
+
+	go func() {
+		// 捕获 goroutine 内部可能产生的 panic，防止整个程序崩溃
+		defer func() {
+			if r := recover(); r != nil {
+				log.WithField("panic", r).Error("saveLoongTweet panic recovered")
+			}
+		}()
+
+		loongDir := filepath.Join(dir, ".loongtweet")
+		os.MkdirAll(loongDir, 0755)
+
+		// 使用统一的文件名生成函数
+		txtFileName := utils.TweetFileName(tweet.Text, tweet.Id, ".txt")
+		txtPath, err := utils.UniquePath(filepath.Join(loongDir, txtFileName))
+		if err != nil {
+			return
+		}
+
+		txtContent := fmt.Sprintf("time:%s\nurl:https://x.com/%s/status/%d\nmedia:%d\n\n%s",
+			tweet.CreatedAt.Format("2006-01-02T15:04:05"),
+			tweet.Creator.ScreenName,
+			tweet.Id,
+			len(tweet.Urls),
+			tweet.Text)
+
+		if err := os.WriteFile(txtPath, []byte(txtContent), 0645); err == nil {
+			os.Chtimes(txtPath, time.Time{}, tweet.CreatedAt)
+		}
+	}()
+}
+
+// cleanTweetJson 清理推文 JSON 中的冗余字段
+func cleanTweetJson(raw []byte) (any, error) {
+	var data any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return nil, err
+	}
+
+	m, ok := data.(map[string]any)
+	if !ok {
+		return data, nil
+	}
+
+	if legacy, ok := m["legacy"].(map[string]any); ok {
+		delete(legacy, "user_id_str")
+		delete(legacy, "id_str")
+
+		if entities, ok := legacy["entities"].(map[string]any); ok {
+			delete(entities, "media")
+			delete(entities, "symbols")
+			delete(entities, "timestamps")
+			delete(entities, "urls")
+			delete(entities, "user_mentions")
+		}
+	}
+
+	if core, ok := m["core"].(map[string]any); ok {
+		if userResults, ok := core["user_results"].(map[string]any); ok {
+			if result, ok := userResults["result"].(map[string]any); ok {
+				delete(result, "id")
+				if userLegacy, ok := result["legacy"].(map[string]any); ok {
+					if profileImg, ok := userLegacy["profile_image_url_https"].(string); ok {
+						profileImg = strings.Replace(profileImg, "_normal", "", 1)
+						profileImg = strings.Replace(profileImg, "_bigger", "", 1)
+						profileImg = strings.Replace(profileImg, "_mini", "", 1)
+						userLegacy["profile_image_url_https"] = profileImg
+					}
+				}
+			}
+		}
+	}
+
+	cleanMediaRecursive(m)
+
+	return m, nil
+}
+
+// cleanMediaRecursive 递归清理 media 对象中的冗余字段
+func cleanMediaRecursive(data any) {
+	switch v := data.(type) {
+	case map[string]any:
+		if media, ok := v["extended_entities"].(map[string]any); ok {
+			if mediaList, ok := media["media"].([]any); ok {
+				for _, item := range mediaList {
+					if m, ok := item.(map[string]any); ok {
+						delete(m, "media_results")
+
+						if originalInfo, ok := m["original_info"].(map[string]any); ok {
+							delete(originalInfo, "focus_rects")
+						}
+
+						if features, ok := m["features"].(map[string]any); ok {
+							delete(features, "large")
+							delete(features, "medium")
+							delete(features, "small")
+						}
+
+						if mediaType, ok := m["type"].(string); ok && mediaType == "photo" {
+							if rawUrl, ok := m["media_url_https"].(string); ok {
+								if strings.Contains(rawUrl, "twimg.com") {
+									m["media_url_https"] = rawUrl + "?name=4096x4096"
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		for _, val := range v {
+			cleanMediaRecursive(val)
+		}
+	case []any:
+		for _, item := range v {
+			cleanMediaRecursive(item)
+		}
+	}
+}
+
 // 任何一个 url 下载失败直接返回
 // TODO: 要么全做，要么不做
-func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, tweet *twitter.Tweet) error {
-	text := utils.WinFileName(tweet.Text)
+// skipLoongTweet: 如果为 true，不生成 .loongtweet 文件（用于恢复下载）
+func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, tweet *twitter.Tweet, skipLoongTweet bool) error {
+	// 保存推文完整信息到 .loongtweet 子目录（仅在非恢复下载时生成）
+	if !skipLoongTweet {
+		saveTweetJson(dir, tweet)  // JSON格式（完整数据）
+		saveLoongTweet(dir, tweet) // TXT格式（人类可读）
+	}
 
 	for _, u := range tweet.Urls {
 		ext, err := utils.GetExtFromUrl(u)
@@ -52,14 +228,20 @@ func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, t
 			return err
 		}
 
-		// 请求
-		resp, err := client.R().SetContext(ctx).SetQueryParam("name", "4096x4096").Get(u)
+		var resp *resty.Response
+		if strings.Contains(u, "tweet_video") || strings.Contains(u, "video.twimg.com") {
+			resp, err = client.R().SetContext(ctx).Get(u)
+		} else {
+			resp, err = client.R().SetContext(ctx).SetQueryParam("name", "4096x4096").Get(u)
+		}
 		if err != nil {
 			return err
 		}
 
 		mutex.Lock()
-		path, err := utils.UniquePath(filepath.Join(dir, text+ext))
+		// 使用统一的文件名生成函数
+		fileName := utils.TweetFileName(tweet.Text, tweet.Id, ext)
+		path, err := utils.UniquePath(filepath.Join(dir, fileName))
 		if err != nil {
 			mutex.Unlock()
 			return err
@@ -79,7 +261,7 @@ func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, t
 		}
 	}
 
-	fmt.Printf("%s %s\n", color.FgLightMagenta.Render("["+tweet.Creator.Title()+"]"), text)
+	fmt.Printf("%s %s\n", color.FgLightMagenta.Render("["+tweet.Creator.Title()+"]"), utils.WinFileName(tweet.Text))
 	return nil
 }
 
@@ -93,9 +275,10 @@ func init() {
 }
 
 type workerConfig struct {
-	ctx    context.Context
-	wg     *sync.WaitGroup
-	cancel context.CancelCauseFunc
+	ctx            context.Context
+	wg             *sync.WaitGroup
+	cancel         context.CancelCauseFunc
+	skipLoongTweet bool // 恢复下载时不生成 .loongtweet 文件
 }
 
 // 负责下载推文，保证 tweet chan 内的推文要么下载成功，要么推送至 error chan
@@ -107,7 +290,7 @@ func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- Pa
 	defer func() {
 		if p := recover(); p != nil {
 			config.cancel(fmt.Errorf("%v", p)) // panic 取消上下文，防止生产者死锁
-			log.WithField("worker", "downloading").Errorln("panic:", p)
+			log.Errorln("✗ [downloading] - panic:", p)
 
 			if pt != nil {
 				errch <- pt // push 正下载的推文
@@ -134,10 +317,27 @@ func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- Pa
 
 		path := pt.GetPath()
 		if path == "" {
+			// 即使 path 为空，也尝试生成 .loongtweet 文件
+			// 使用 Creator 信息构建用户目录
+			if !config.skipLoongTweet {
+				tweet := pt.GetTweet()
+				if tweet != nil && tweet.Creator != nil {
+					if tie, ok := pt.(TweetInEntity); ok && tie.Entity != nil {
+						parentDir := tie.Entity.ParentDir()
+						if parentDir != "" {
+							// 使用 Creator.Name 和 Creator.ScreenName 构建目录名
+							userDirName := utils.WinFileName(tweet.Creator.Title())
+							userDir := filepath.Join(parentDir, userDirName)
+							saveTweetJson(userDir, tweet)  // JSON格式（完整数据）
+							saveLoongTweet(userDir, tweet) // TXT格式（人类可读）
+						}
+					}
+				}
+			}
 			errch <- pt
 			continue
 		}
-		err := downloadTweetMedia(config.ctx, client, path, pt.GetTweet())
+		err := downloadTweetMedia(config.ctx, client, path, pt.GetTweet(), config.skipLoongTweet)
 		// 403: Dmcaed
 		if err != nil && !utils.IsStatusCode(err, 404) && !utils.IsStatusCode(err, 403) {
 			errch <- pt
@@ -151,7 +351,8 @@ func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- Pa
 }
 
 // 批量下载推文并返回下载失败的推文，可以保证推文被成功下载或被返回
-func BatchDownloadTweet(ctx context.Context, client *resty.Client, pts ...PackgedTweet) []PackgedTweet {
+// skipLoongTweet: 如果为 true，不生成 .loongtweet 文件（用于恢复下载）
+func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTweet bool, pts ...PackgedTweet) []PackgedTweet {
 	if len(pts) == 0 {
 		return nil
 	}
@@ -169,9 +370,10 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, pts ...Packge
 	close(tweetChan)
 
 	config := workerConfig{
-		ctx:    ctx,
-		cancel: cancel,
-		wg:     &wg,
+		ctx:            ctx,
+		cancel:         cancel,
+		wg:             &wg,
+		skipLoongTweet: skipLoongTweet,
 	}
 	for i := 0; i < numRoutine; i++ {
 		wg.Add(1)
@@ -244,7 +446,7 @@ func DownloadUser(ctx context.Context, db *sqlx.DB, client *resty.Client, user *
 
 	_, loaded := syncedUsers.Load(user.Id)
 	if loaded {
-		log.WithField("user", user.Title()).Debugln("skiped downloaded user")
+		log.Debugln("○", user.Title(), "-", "skiped downloaded user")
 		return nil, nil
 	}
 	entity, err := syncUserAndEntity(db, user, dir)
@@ -264,7 +466,8 @@ func DownloadUser(ctx context.Context, db *sqlx.DB, client *resty.Client, user *
 		pts = append(pts, TweetInEntity{Tweet: tw, Entity: entity})
 	}
 
-	return BatchDownloadTweet(ctx, client, pts...), nil
+	// 正常下载，生成 .loongtweet 文件（skipLoongTweet=false）
+	return BatchDownloadTweet(ctx, client, false, pts...), nil
 }
 
 func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string) (*UserEntity, error) {
@@ -293,6 +496,13 @@ func (pt TweetInEntity) GetTweet() *twitter.Tweet {
 }
 
 func (pt TweetInEntity) GetPath() string {
+	// 使用 defer/recover 捕获 Path() 可能产生的 panic
+	defer func() {
+		if r := recover(); r != nil {
+			// Path() panic 时返回空字符串
+		}
+	}()
+
 	path, err := pt.Entity.Path()
 	if err != nil {
 		return ""
@@ -300,8 +510,8 @@ func (pt TweetInEntity) GetPath() string {
 	return path
 }
 
-const userTweetRateLimit = 500
-const userTweetMaxConcurrent = 100 // avoid DownstreamOverCapacityError
+const userTweetRateLimit = 1500
+const userTweetMaxConcurrent = 35 // avoid DownstreamOverCapacityError
 
 // var syncedListUsers = make(map[uint64]map[int64]struct{})
 var syncedListUsers sync.Map //leid -> uid -> struct{}
@@ -351,9 +561,9 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	// ctx
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	// logger
-	updaterLogger := log.WithField("worker", "updating")
-	getterLogger := log.WithField("worker", "getting")
+
+	symlinkWarnCount := 0
+	symlinkWarnMu := sync.Mutex{}
 
 	panicHandler := func() {
 		if r := recover(); r != nil {
@@ -400,7 +610,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			if !loaded {
 				pathEntity, err = syncUserAndEntity(db, user, dir)
 				if err != nil {
-					updaterLogger.WithField("user", user.Title()).Warnln("failed to update user or entity", err)
+					log.Warnln("✗", user.Title(), "-", "failed to update user or entity", err)
 					continue
 				}
 				syncedUsers.Store(user.Id, pathEntity)
@@ -409,11 +619,16 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				upath, _ := pathEntity.Path()
 				linkds, err := database.GetUserLinks(db, user.Id)
 				if err != nil {
-					updaterLogger.WithField("user", user.Title()).Warnln("failed to get links to user:", err)
+					log.Warnln("✗", user.Title(), "-", "failed to get links to user:", err)
 				}
 				for _, linkd := range linkds {
 					if err = updateUserLink(linkd, db, upath); err != nil {
-						updaterLogger.WithField("user", user.Title()).Warnln("failed to update link:", err)
+						symlinkWarnMu.Lock()
+						symlinkWarnCount++
+						if symlinkWarnCount == 1 {
+							log.Warnln("✗", user.Title(), "-", "symlink permission denied (suppressing further warnings)")
+						}
+						symlinkWarnMu.Unlock()
 					}
 					sl, _ := syncedListUsers.LoadOrStore(int(linkd.ParentLstEntityId), &sync.Map{})
 					syncedList := sl.(*sync.Map)
@@ -431,9 +646,9 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				// 自动关注
 				if user.IsProtected && user.Followstate == twitter.FS_UNFOLLOW && autoFollow {
 					if err := twitter.FollowUser(ctx, client, user); err != nil {
-						log.WithField("user", user.Title()).Warnln("failed to follow user:", err)
+						log.Warnln("✗", user.Title(), "-", "failed to follow user:", err)
 					} else {
-						log.WithField("user", user.Title()).Debugln("follow request has been sent")
+						log.Debugln("✓", user.Title(), "-", "follow request has been sent")
 					}
 				}
 			} else {
@@ -441,7 +656,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			}
 
 			// 即便同步一个用户时也同步了所有指向此用户的链接，
-			// 但此用户仍可能会是一个新的 “列表-用户”，所以判断此用户链接是否同步过，
+			// 但此用户仍可能会是一个新的 "列表-用户"，所以判断此用户链接是否同步过，
 			// 如果否，那么创建一个属于此列表的用户链接
 			if leid == nil {
 				continue
@@ -469,7 +684,12 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				}
 			}
 			if err != nil {
-				updaterLogger.WithField("user", user.Title()).Warnln("failed to create link for user:", err)
+				symlinkWarnMu.Lock()
+				symlinkWarnCount++
+				if symlinkWarnCount == 1 {
+					log.Warnln("✗", user.Title(), "-", "symlink permission denied (suppressing further warnings)")
+				}
+				symlinkWarnMu.Unlock()
 			}
 		}
 	}()
@@ -481,17 +701,18 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	log.Debugln("real members:", userEntityHeap.Size())
 	log.Debugln("missing tweets:", missingTweets)
 	log.Debugln("deepest:", deepest)
-
-	clients := make([]*resty.Client, 0)
-	clients = append(clients, client)
-	clients = append(clients, additional...)
+	if symlinkWarnCount > 0 {
+		log.Warnf("symlink permission denied: %d errors suppressed (run as admin to enable symlinks)", symlinkWarnCount)
+	}
 
 	producer := func(entity *UserEntity) {
 		defer prodwg.Done()
 		defer panicHandler()
 
 		user := uidToUser[entity.Uid()]
-		cli := twitter.SelectUserMediaClient(ctx, clients)
+
+		// 使用 MFQ 客户端选择
+		cli := twitter.SelectClientMFQ(ctx, client, additional, user, twitter.UserMediaPath())
 		if ctx.Err() != nil {
 			userEntityHeap.Push(entity)
 			return
@@ -509,11 +730,12 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		}
 		if v, ok := err.(*twitter.TwitterApiError); ok {
 			// 客户端不再可用
-			if v.Code == twitter.ErrExceedPostLimit {
+			switch v.Code {
+			case twitter.ErrExceedPostLimit:
 				twitter.SetClientError(cli, fmt.Errorf("reached the limit for seeing posts today"))
 				userEntityHeap.Push(entity)
 				return
-			} else if v.Code == twitter.ErrAccountLocked {
+			case twitter.ErrAccountLocked:
 				twitter.SetClientError(cli, fmt.Errorf("account is locked"))
 				userEntityHeap.Push(entity)
 				return
@@ -524,13 +746,13 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			return
 		}
 		if err != nil {
-			getterLogger.WithField("user", entity.Name()).Warnln("failed to get user medias:", err)
+			log.Warnln("✗", entity.Name(), "-", "failed to get user medias:", err)
 			return
 		}
 
 		if len(tweets) == 0 {
 			if err := database.UpdateUserEntityMediCount(db, entity.Id(), user.MediaCount); err != nil {
-				getterLogger.WithField("user", entity.Name()).Panicln("failed to update user medias count:", err)
+				log.Panicln("✗", entity.Name(), "-", "failed to update user medias count:", err)
 			}
 			return
 		}
@@ -547,7 +769,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 
 		if err := database.UpdateUserEntityTweetStat(db, entity.Id(), tweets[0].CreatedAt, user.MediaCount); err != nil {
 			// 影响程序的正确性，必须 Panic
-			getterLogger.WithField("user", entity.Name()).Panicln("failed to update user tweets stat:", err)
+			log.Panicln("✗", entity.Name(), "-", "failed to update user tweets stat:", err)
 		}
 	}
 
@@ -566,7 +788,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	if err != nil {
 		return nil, err
 	}
-	defer ants.Release()
+	defer producerPool.Release()
 
 	//closer
 	go func() {
@@ -581,10 +803,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				entity := userEntityHeap.Peek()
 				depth := depthByEntity[entity]
 				if depth > userTweetRateLimit {
-					log.WithFields(log.Fields{
-						"user":  entity.Name(),
-						"depth": depth,
-					}).Warnln("user depth greater than the max limit of window")
+					log.Warnln("user depth exceeds limit:", entity.Name(), "- depth:", depth)
 					userEntityHeap.Pop()
 					continue
 				}
@@ -642,7 +861,8 @@ func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list t
 	for i, user := range members {
 		packgedUsers[i] = userInLstEntity{user: user, leid: &eid}
 	}
-	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, autoFollow, additional)
+	// 列表下载时，强制启用自动关注
+	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, true, additional)
 }
 
 func syncList(db *sqlx.DB, list *twitter.List) error {
@@ -689,9 +909,19 @@ func syncLstAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB
 		return nil, err
 	}
 
+	// 同步列表成员，清理已删除的用户链接
+	eid := entity.Id()
+	memberIDs := make([]uint64, len(members))
+	for i, u := range members {
+		memberIDs[i] = u.Id
+	}
+	syncManager := NewListSyncManager(db)
+	if err := syncManager.SyncListMembers(ctx, eid, lst.Title(), memberIDs); err != nil {
+		log.Warnln("failed to sync list members for", lst.Title(), ":", err)
+	}
+
 	// bind lst entity to users for creating symlink
 	packgedUsers := make([]userInLstEntity, 0, len(members))
-	eid := entity.Id()
 	for _, user := range members {
 		packgedUsers = append(packgedUsers, userInLstEntity{user: user, leid: &eid})
 	}
@@ -731,4 +961,167 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 
 	log.Debugln("collected users:", len(packgedUsers))
 	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, autoFollow, additional)
+}
+
+// MarkedUserInfo 标记用户为已下载的结果信息
+type MarkedUserInfo struct {
+	UserID     uint64 `json:"user_id"`
+	ScreenName string `json:"screen_name"`
+	EntityID   int    `json:"entity_id"`
+	Success    bool   `json:"success"`
+	Error      string `json:"error,omitempty"`
+}
+
+// MarkUsersAsDownloaded 将用户标记为已下载，不下载内容，只更新数据库中的 latest_release_time
+// 返回标记的用户信息列表，包含 entity_id 等详细信息
+// markTimeStr: 时间戳字符串，格式为 "2006-01-02T15:04:05"
+//   - 未提供(""): 使用当前时间
+//   - 空值("null"/"NULL"/"nil"): 设置 latest_release_time 为 NULL（全量下载）
+//   - 指定时间: 使用指定的时间
+func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.DB, lists []twitter.ListBase, users []*twitter.User, dir string, markTimeStr string) ([]MarkedUserInfo, error) {
+	// 解析时间戳（使用本地时区）
+	var timestamp *time.Time
+	if markTimeStr == "" {
+		// 未提供时间，使用当前时间
+		now := time.Now()
+		timestamp = &now
+		log.Infoln("marking users as downloaded, timestamp:", timestamp.Format(time.RFC3339))
+	} else if strings.ToLower(markTimeStr) == "null" || strings.ToLower(markTimeStr) == "nil" {
+		// 显式设置 NULL，用于全量下载
+		timestamp = nil
+		log.Infoln("marking users as downloaded, timestamp: NULL (full download)")
+	} else {
+		// 使用本地时区解析，确保用户输入的时间被正确识别为本地时间
+		loc, locErr := time.LoadLocation("Local")
+		if locErr != nil {
+			loc = time.UTC
+		}
+		parsedTime, err := time.ParseInLocation("2006-01-02T15:04:05", markTimeStr, loc)
+		if err != nil {
+			return nil, fmt.Errorf("invalid mark-time format '%s', expected: 2006-01-02T15:04:05 (example: 2024-01-15T10:30:00) or 'null' for full download: %v", markTimeStr, err)
+		}
+		timestamp = &parsedTime
+		log.Infoln("marking users as downloaded, timestamp:", timestamp.Format(time.RFC3339))
+	}
+
+	var results []MarkedUserInfo
+	var successCount, failCount int
+
+	// 处理列表中的用户
+	for _, lst := range lists {
+		if err := context.Cause(ctx); err != nil {
+			return results, err
+		}
+
+		if lst == nil {
+			continue
+		}
+
+		members, err := lst.GetMembers(ctx, client)
+		if err != nil {
+			// 检查是否是列表不存在或无法访问的错误
+			errStr := err.Error()
+			if strings.Contains(errStr, "does not exist or is not accessible") ||
+				strings.Contains(errStr, "unable to get timeline data") {
+				return nil, fmt.Errorf("list %s does not exist or is not accessible", lst.Title())
+			}
+			log.Warnln("✗", lst.Title(), "-", "failed to get list members:", err)
+			continue
+		}
+		for _, user := range members {
+			if err := context.Cause(ctx); err != nil {
+				return results, err
+			}
+
+			if user == nil {
+				continue
+			}
+
+			info := markSingleUserWithInfo(db, user, dir, timestamp)
+			results = append(results, info)
+			if info.Success {
+				successCount++
+			} else {
+				failCount++
+			}
+		}
+	}
+
+	// 处理直接指定的用户
+	for _, user := range users {
+		if err := context.Cause(ctx); err != nil {
+			return results, err
+		}
+
+		if user == nil {
+			continue
+		}
+
+		info := markSingleUserWithInfo(db, user, dir, timestamp)
+		results = append(results, info)
+		if info.Success {
+			successCount++
+		} else {
+			failCount++
+		}
+	}
+
+	log.Infoln("finished marking users as downloaded, success:", successCount, "failed:", failCount)
+	return results, nil
+}
+
+// markSingleUserWithInfo 标记单个用户为已下载并返回详细信息
+func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User, dir string, timestamp *time.Time) (info MarkedUserInfo) {
+	// 防御性检查：确保 user 不为 nil
+	if user == nil {
+		info.Success = false
+		info.Error = "user is nil"
+		return info
+	}
+
+	info = MarkedUserInfo{
+		UserID:     user.Id,
+		ScreenName: user.ScreenName,
+		Success:    false,
+	}
+
+	// 捕获可能的 panic，增加健壮性
+	defer func() {
+		if r := recover(); r != nil {
+			info.Success = false
+			info.Error = fmt.Sprintf("panic: %v", r)
+			log.Errorln("✗", user.Title(), "-", "panic in markSingleUserWithInfo:", r)
+		}
+	}()
+
+	// 同步用户和实体（与正常下载使用相同的逻辑）
+	entity, err := syncUserAndEntity(db, user, dir)
+	if err != nil {
+		info.Error = fmt.Sprintf("failed to sync user and entity: %v", err)
+		log.Warnln("✗", user.Title(), "-", "failed to mark user:", err)
+		return info
+	}
+
+	// 设置 latest_release_time
+	if timestamp == nil {
+		// 设置为 NULL，用于全量下载
+		if err := entity.ClearLatestReleaseTime(); err != nil {
+			info.Error = fmt.Sprintf("failed to clear latest release time: %v", err)
+			log.Warnln("✗", user.Title(), "-", "failed to clear latest release time:", err)
+			return info
+		}
+		log.Infoln("✓", user.Title(), "-", "cleared latest release time for full download")
+	} else {
+		// 设置为指定时间
+		if err := entity.SetLatestReleaseTime(*timestamp); err != nil {
+			info.Error = fmt.Sprintf("failed to set latest release time: %v", err)
+			log.Warnln("✗", user.Title(), "-", "failed to set latest release time:", err)
+			return info
+		}
+	}
+
+	info.Success = true
+	info.EntityID = entity.Id()
+	log.Infoln("✓", user.Title(), "-", "marked as downloaded")
+	return info
 }

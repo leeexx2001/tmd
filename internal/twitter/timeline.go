@@ -13,12 +13,13 @@ const (
 	timelineUser
 )
 
-func getInstructions(resp []byte, path string) gjson.Result {
+func getInstructions(resp []byte, path string) (gjson.Result, error) {
 	inst := gjson.GetBytes(resp, path)
 	if !inst.Exists() {
-		panic(fmt.Sprintf("unable to get instructions: %s path: '%s'", resp, path))
+		// 简化错误信息，避免输出原始响应数据
+		return gjson.Result{}, fmt.Errorf("unable to get timeline data: the resource may not exist or be private")
 	}
-	return inst
+	return inst, nil
 }
 
 func getEntries(instructions gjson.Result) gjson.Result {
@@ -39,20 +40,23 @@ func getModuleItems(instructions gjson.Result) gjson.Result {
 	return gjson.Result{}
 }
 
-func getNextCursor(entries gjson.Result) string {
+func getNextCursorSafe(entries gjson.Result) (string, error) {
+	if !entries.Exists() || !entries.IsArray() {
+		return "", nil
+	}
 	array := entries.Array()
-	// if len(array) == 2 {
-	// 	return "" // no next page
-	// }
+	if len(array) == 0 {
+		return "", nil
+	}
 
 	for i := len(array) - 1; i >= 0; i-- {
 		if array[i].Get("content.entryType").String() == "TimelineTimelineCursor" &&
 			array[i].Get("content.cursorType").String() == "Bottom" {
-			return array[i].Get("content.value").String()
+			return array[i].Get("content.value").String(), nil
 		}
 	}
 
-	panic(fmt.Sprintf("invalid entries: %s", entries.String()))
+	return "", nil
 }
 
 func getItemContentFromModuleItem(moduleItem gjson.Result) gjson.Result {
@@ -65,30 +69,34 @@ func getItemContentFromModuleItem(moduleItem gjson.Result) gjson.Result {
 
 func getItemContentsFromEntry(entry gjson.Result) []gjson.Result {
 	content := entry.Get("content")
-	ty := content.Get("entryType").String()
-	if ty == "TimelineTimelineModule" {
+	switch content.Get("entryType").String() {
+	case "TimelineTimelineModule":
 		return content.Get("items.#.item.itemContent").Array()
-	} else if ty == "TimelineTimelineItem" {
+	case "TimelineTimelineItem":
 		return []gjson.Result{content.Get("itemContent")}
+	default:
+		panic(fmt.Sprintf("invalid entry: %s", entry.String()))
 	}
-
-	panic(fmt.Sprintf("invalid entry: %s", entry.String()))
 }
 
 func getResults(itemContent gjson.Result, itemType int) gjson.Result {
-	if itemType == timelineTweet {
+	switch itemType {
+	case timelineTweet:
 		return itemContent.Get("tweet_results")
-	} else if itemType == timelineUser {
+	case timelineUser:
 		return itemContent.Get("user_results")
+	default:
+		panic(fmt.Sprintf("invalid itemContent: %s", itemContent.String()))
 	}
-
-	panic(fmt.Sprintf("invalid itemContent: %s", itemContent.String()))
 }
 
 func getTimelineResp(ctx context.Context, api timelineApi, client *resty.Client) ([]byte, error) {
 	url := makeUrl(api)
 	resp, err := client.R().SetContext(ctx).Get(url)
 	if err != nil {
+		return nil, err
+	}
+	if err := CheckApiResp(resp.Body()); err != nil {
 		return nil, err
 	}
 	return resp.Body(), nil
@@ -106,11 +114,14 @@ func getTimelineItemContents(ctx context.Context, api timelineApi, client *resty
 	if string(resp) == "{\"data\":{\"user\":{}}}" {
 		return nil, "", nil
 	}
-	instructions := getInstructions(resp, instPath)
+	instructions, err := getInstructions(resp, instPath)
+	if err != nil {
+		return nil, "", err
+	}
 	entries := getEntries(instructions)
 	moduleItems := getModuleItems(instructions)
 	if !entries.Exists() && !moduleItems.Exists() {
-		panic(fmt.Sprintf("invalid instructions: %s", instructions.String()))
+		return nil, "", nil
 	}
 
 	itemContents := make([]gjson.Result, 0)
@@ -126,7 +137,11 @@ func getTimelineItemContents(ctx context.Context, api timelineApi, client *resty
 			itemContents = append(itemContents, getItemContentFromModuleItem(moduleItem))
 		}
 	}
-	return itemContents, getNextCursor(entries), nil
+	cursor, err := getNextCursorSafe(entries)
+	if err != nil {
+		return nil, "", err
+	}
+	return itemContents, cursor, nil
 }
 
 func getTimelineItemContentsTillEnd(ctx context.Context, api timelineApi, client *resty.Client, instPath string) ([]gjson.Result, error) {
