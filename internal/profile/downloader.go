@@ -296,7 +296,10 @@ func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, 
 		return ensureProfileDirs(userDir)
 	}
 
-	oldUserDir := entity.Path()
+	oldUserDir, err := entity.Path()
+	if err != nil {
+		return "", err
+	}
 	if entity.Name == expectedTitle {
 		if err := os.MkdirAll(oldUserDir, 0755); err != nil && !os.IsExist(err) {
 			return "", err

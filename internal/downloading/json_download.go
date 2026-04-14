@@ -207,7 +207,8 @@ func parseFormattedEntry(entry *FormattedTweetEntry) (*twitter.Tweet, error) {
 				for _, m := range mediaList {
 					if mm, ok := m.(map[string]any); ok {
 						mediaType := getStringFromMap(mm, "type")
-						if mediaType == "video" || mediaType == "animated_gif" {
+						switch mediaType {
+						case "video", "animated_gif":
 							if variants, ok := mm["video_info"].(map[string]any); ok {
 								if variantList, ok := variants["variants"].([]any); ok {
 									var bestURL string
@@ -227,7 +228,7 @@ func parseFormattedEntry(entry *FormattedTweetEntry) (*twitter.Tweet, error) {
 									}
 								}
 							}
-						} else if mediaType == "photo" {
+						case "photo":
 							if url := getStringFromMap(mm, "media_url_https"); url != "" {
 								tweet.Urls = append(tweet.Urls, url)
 							}

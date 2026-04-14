@@ -8,6 +8,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/unkmonster/tmd/internal/database"
+	"github.com/unkmonster/tmd/internal/entity"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
 
@@ -96,10 +97,10 @@ func (td *TweetDumper) GetTotal(db *sqlx.DB) ([]*TweetInEntity, error) {
 		if e == nil {
 			return nil, fmt.Errorf("entity %d is not exists", k)
 		}
-		ue := UserEntity{db: db, record: e, created: true}
 
 		for _, tw := range v {
-			results = append(results, &TweetInEntity{Tweet: tw, Entity: &ue})
+			ue := entity.NewUserEntityFromRecord(db, e)
+			results = append(results, &TweetInEntity{Tweet: tw, Entity: ue})
 		}
 	}
 	return results, nil

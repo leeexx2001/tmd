@@ -202,8 +202,13 @@ func TestUserEntity(t *testing.T) {
 	for _, entity := range entities {
 		// path
 		expectedPath := filepath.Join(tempDir, entity.Name)
-		if expectedPath != entity.Path() {
-			t.Errorf("entity.Path() = %v want %v", entity.Path(), expectedPath)
+		actualPath, err := entity.Path()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if expectedPath != actualPath {
+			t.Errorf("entity.Path() = %v want %v", actualPath, expectedPath)
 			return
 		}
 
@@ -317,8 +322,13 @@ func TestLstEntity(t *testing.T) {
 	for _, entity := range entities {
 		// path
 		expectedPath := filepath.Join(tempdir, entity.Name)
-		if expectedPath != entity.Path() {
-			t.Errorf("entity.Path() = %v want %v", entity.Path(), expectedPath)
+		actualPath, err := entity.Path()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if expectedPath != actualPath {
+			t.Errorf("entity.Path() = %v want %v", actualPath, expectedPath)
 			return
 		}
 		// create
@@ -414,7 +424,12 @@ func TestLink(t *testing.T) {
 			t.Error(err)
 			return
 		}
-		expectedPath := filepath.Join(le.Path(), link.Name)
+		lePath, err := le.Path()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		expectedPath := filepath.Join(lePath, link.Name)
 		path, err := link.Path(db)
 		if err != nil {
 			t.Error(err)

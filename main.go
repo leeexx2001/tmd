@@ -437,7 +437,12 @@ func main() {
 	// retry failed tweets at exit
 	defer func() {
 		for _, te := range todump {
-			dumper.Push(te.Entity.Id(), te.Tweet)
+			eid, err := te.Entity.Id()
+			if err != nil {
+				log.Warnln("failed to get entity id:", err)
+				continue
+			}
+			dumper.Push(eid, te.Tweet)
 		}
 		// 如果手动取消，不尝试重试，快速终止进程
 		if ctx.Err() != context.Canceled && !noRetry {
@@ -680,7 +685,12 @@ func retryFailedTweets(ctx context.Context, dumper *downloading.TweetDumper, db 
 	dumper.Clear()
 	for _, pt := range newFails {
 		te := pt.(*downloading.TweetInEntity)
-		dumper.Push(te.Entity.Id(), te.Tweet)
+		eid, err := te.Entity.Id()
+		if err != nil {
+			log.Warnln("failed to get entity id:", err)
+			continue
+		}
+		dumper.Push(eid, te.Tweet)
 	}
 
 	return nil

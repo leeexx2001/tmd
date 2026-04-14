@@ -45,18 +45,18 @@ type LstEntity struct {
 	ParentDir string        `db:"parent_dir"`
 }
 
-func (le *LstEntity) Path() string {
+func (le *LstEntity) Path() (string, error) {
 	if le.ParentDir == "" || le.Name == "" {
-		panic("no enough info to get path")
+		return "", fmt.Errorf("no enough info to get path for lst entity: parentDir=%q, name=%q", le.ParentDir, le.Name)
 	}
-	return filepath.Join(le.ParentDir, le.Name)
+	return filepath.Join(le.ParentDir, le.Name), nil
 }
 
-func (ue *UserEntity) Path() string {
+func (ue *UserEntity) Path() (string, error) {
 	if ue.ParentDir == "" || ue.Name == "" {
-		panic("no enough info to get path")
+		return "", fmt.Errorf("no enough info to get path for user entity: parentDir=%q, name=%q", ue.ParentDir, ue.Name)
 	}
-	return filepath.Join(ue.ParentDir, ue.Name)
+	return filepath.Join(ue.ParentDir, ue.Name), nil
 }
 
 func (ul *UserLink) Path(db *sqlx.DB) (string, error) {
@@ -68,5 +68,9 @@ func (ul *UserLink) Path(db *sqlx.DB) (string, error) {
 		return "", fmt.Errorf("parent lst was not exists")
 	}
 
-	return filepath.Join(le.Path(), ul.Name), nil
+	lePath, err := le.Path()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(lePath, ul.Name), nil
 }

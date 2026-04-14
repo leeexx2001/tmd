@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.7.0] - 2026-04-12
+
+### Added
+
+#### 新增 `internal/entity/` 包 - 实体类型定义
+
+将分散在各处的实体类型集中管理：
+
+| 文件 | 功能 |
+|------|------|
+| `interface.go` | 实体接口定义 |
+| `list.go` | 列表相关实体 |
+| `sync.go` | 同步相关实体 |
+| `user.go` | 用户相关实体 |
+
+#### 新增文档
+
+- `doc/用户名变更处理机制.md` - 用户名变更处理机制说明
+
+### Changed
+
+#### 代码重构与优化
+
+**数据库层 (`internal/database/`)：**
+- `crud.go` - 重构 CRUD 操作，优化错误处理
+- `db_test.go` - 补充测试用例
+- `model.go` - 模型定义优化
+
+**下载层 (`internal/downloading/`)：**
+- `dumper.go` - 优化文件转储逻辑
+- `entity.go` - 移除冗余代码（-256行）
+- `features.go` - 重构下载特性
+- `json_download.go` - JSON下载优化
+
+**命名服务 (`internal/naming/`)：**
+- `naming.go` - 优化命名逻辑
+- `naming_test.go` - 测试用例更新
+
+**Twitter API层 (`internal/twitter/`)：**
+- `list.go` - 列表功能优化
+- `timeline.go` - 时间线处理优化
+- `tweet.go` - 推文处理优化
+- `user.go` - 用户数据处理优化
+
+**其他：**
+- `main.go` - 主程序优化
+- `internal/profile/downloader.go` - 下载器优化
+- `internal/profile/storage.go` - 存储层优化
+
+### Removed
+
+- `internal/downloading/entity.go` - 实体类型迁移到 `internal/entity/` 包
+
+---
+
 ## [2.6.0] - 2026-04-12
 
 ### Added

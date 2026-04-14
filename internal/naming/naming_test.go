@@ -24,7 +24,7 @@ func TestTweetNaming_LogFormat(t *testing.T) {
 			text:     "",
 			tweetID:  123,
 			creator:  "test",
-			expected: "[test] _123",
+			expected: "[test] tweet_123",
 		},
 		{
 			name:     "special chars",

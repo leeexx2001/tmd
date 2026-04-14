@@ -66,7 +66,11 @@ func parseList(list *gjson.Result) (*List, error) {
 func itemContentsToUsers(itemContents []gjson.Result) []*User {
 	users := make([]*User, 0, len(itemContents))
 	for _, ic := range itemContents {
-		user_results := getResults(ic, timelineUser)
+		user_results, err := getResults(ic, timelineUser)
+		if err != nil {
+			log.Debugln("getResults failed:", err)
+			continue
+		}
 		if user_results.String() == "{}" {
 			continue
 		}

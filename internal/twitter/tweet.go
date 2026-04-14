@@ -17,28 +17,26 @@ type Tweet struct {
 	RawJSON   string
 }
 
-func parseTweetResults(tweet_results *gjson.Result) *Tweet {
+func parseTweetResults(tweet_results *gjson.Result) (*Tweet, error) {
 	var tweet Tweet
 	var err error
 
 	result := tweet_results.Get("result")
 	if !result.Exists() || result.Get("__typename").String() == "TweetTombstone" {
-		return nil
+		return nil, nil
 	}
 	if result.Get("__typename").String() == "TweetWithVisibilityResults" {
 		result = result.Get("tweet")
 	}
 	legacy := result.Get("legacy")
-	// TODO: 利用 rest_id 重新获取推文信息
 	if !legacy.Exists() {
-		return nil
+		return nil, nil
 	}
 	user_results := result.Get("core.user_results")
 
 	tweet.Id = result.Get("rest_id").Uint()
 	tweet.RawJSON = result.Raw
 
-	// 优先从 note_tweet 获取长推文完整文本（Twitter 支持 4000 字符长推文）
 	noteTweet := result.Get("note_tweet.note_tweet_results.result.text")
 	if noteTweet.Exists() && noteTweet.String() != "" {
 		tweet.Text = html.UnescapeString(noteTweet.String())
@@ -49,13 +47,13 @@ func parseTweetResults(tweet_results *gjson.Result) *Tweet {
 	tweet.Creator, _ = parseUserResults(&user_results)
 	tweet.CreatedAt, err = time.Parse(time.RubyDate, legacy.Get("created_at").String())
 	if err != nil {
-		panic(fmt.Errorf("invalid time format %v", err))
+		return nil, fmt.Errorf("invalid time format %v", err)
 	}
 	media := legacy.Get("extended_entities.media")
 	if media.Exists() {
 		tweet.Urls = getUrlsFromMedia(&media)
 	}
-	return &tweet
+	return &tweet, nil
 }
 
 func getUrlsFromMedia(media *gjson.Result) []string {

@@ -1,8 +1,6 @@
 package profile
 
 import (
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -142,48 +140,4 @@ func (fsm *FileStorageManager) CreateVersion(userTitle string, fileType FileType
 	return versionPath, nil
 }
 
-// AtomicWrite 原子写入文件
-// Deprecated: 使用 github.com/unkmonster/tmd/internal/downloader.FileWriter 替代
-func (fsm *FileStorageManager) AtomicWrite(filePath string, data []byte) error {
-	dir := filepath.Dir(filePath)
-	tempFile, err := os.CreateTemp(dir, ".tmp_*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tempPath := tempFile.Name()
 
-	defer os.Remove(tempPath)
-
-	if _, err := tempFile.Write(data); err != nil {
-		tempFile.Close()
-		return fmt.Errorf("failed to write temp file: %w", err)
-	}
-
-	if err := tempFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	if err := os.Rename(tempPath, filePath); err != nil {
-		return fmt.Errorf("failed to rename temp file: %w", err)
-	}
-
-	return nil
-}
-
-// ComputeFileHash 计算文件 Hash
-// Deprecated: 使用 github.com/unkmonster/tmd/internal/downloader.FileWriter 替代
-func (fsm *FileStorageManager) ComputeFileHash(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	hash := md5.Sum(data)
-	return hex.EncodeToString(hash[:]), nil
-}
-
-// ComputeDataHash 计算数据 Hash
-// Deprecated: 使用 github.com/unkmonster/tmd/internal/downloader.FileWriter 替代
-func ComputeDataHash(data []byte) string {
-	hash := md5.Sum(data)
-	return hex.EncodeToString(hash[:])
-}

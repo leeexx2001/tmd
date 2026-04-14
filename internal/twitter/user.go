@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/go-resty/resty/v2"
 	"github.com/tidwall/gjson"
 	"github.com/unkmonster/tmd/internal/utils"
@@ -156,8 +158,17 @@ func (u *User) IsVisiable() bool {
 func itemContentsToTweets(itemContents []gjson.Result) []*Tweet {
 	res := make([]*Tweet, 0, len(itemContents))
 	for _, itemContent := range itemContents {
-		tweetResults := getResults(itemContent, timelineTweet)
-		if tw := parseTweetResults(&tweetResults); tw != nil {
+		tweetResults, err := getResults(itemContent, timelineTweet)
+		if err != nil {
+			log.Debugln("getResults failed:", err)
+			continue
+		}
+		tw, err := parseTweetResults(&tweetResults)
+		if err != nil {
+			log.Debugln("parseTweetResults failed:", err)
+			continue
+		}
+		if tw != nil {
 			res = append(res, tw)
 		}
 	}

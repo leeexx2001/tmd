@@ -9,6 +9,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/unkmonster/tmd/internal/database"
+	"github.com/unkmonster/tmd/internal/entity"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
 )
@@ -57,7 +58,12 @@ func TestUserEntity(t *testing.T) {
 	os.RemoveAll(filepath.Join(tempdir, name))
 	ue := testSyncUser(t, name, uid, tempdir, true)
 
-	if !ue.LatestReleaseTime().IsZero() {
+	minTime, err := ue.LatestReleaseTime()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if !minTime.IsZero() {
 		t.Errorf("default time is not null")
 		return
 	}
@@ -67,11 +73,21 @@ func TestUserEntity(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	if !ue.LatestReleaseTime().Equal(now) {
-		t.Errorf("latest release: %v, want %v", ue.LatestReleaseTime(), now)
+	minTime, err = ue.LatestReleaseTime()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if !minTime.Equal(now) {
+		t.Errorf("latest release: %v, want %v", minTime, now)
 	}
 
-	record, err := database.GetUserEntity(db, ue.Id())
+	eid, err := ue.Id()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	record, err := database.GetUserEntity(db, eid)
 	if err != nil {
 		t.Error(err)
 		return
@@ -81,7 +97,11 @@ func TestUserEntity(t *testing.T) {
 	}
 
 	// remove
-	eid := ue.Id()
+	eid, err = ue.Id()
+	if err != nil {
+		t.Error(err)
+		return
+	}
 	if err := ue.Remove(); err != nil {
 		t.Error(err)
 		return
@@ -127,7 +147,11 @@ func TestListEntity(t *testing.T) {
 	le := testSyncList(t, name, uid, tempdir, true)
 
 	// remove
-	eid := le.Id()
+	eid, err := le.Id()
+	if err != nil {
+		t.Error(err)
+		return
+	}
 	if err := le.Remove(); err != nil {
 		t.Error(err)
 		return
@@ -152,8 +176,8 @@ func TestListEntity(t *testing.T) {
 	}
 }
 
-func verifyDir(t *testing.T, entity SmartPath, wantPath string) {
-	path, _ := entity.Path()
+func verifyDir(t *testing.T, e entity.Entity, wantPath string) {
+	path, _ := e.Path()
 	if wantPath != path {
 		t.Errorf("path: %s, want %s", path, wantPath)
 		return
@@ -171,18 +195,28 @@ func verifyDir(t *testing.T, entity SmartPath, wantPath string) {
 	}
 }
 
-func verifyUserRecord(t *testing.T, entity SmartPath, uid uint64, name string, parentDir string) *UserEntity {
+func verifyUserRecord(t *testing.T, e entity.Entity, uid uint64, name string, parentDir string) *entity.UserEntity {
 	wantPath := filepath.Join(parentDir, name)
 	record, err := database.LocateUserEntity(db, uid, parentDir)
 	if err != nil {
 		t.Error(err)
 		return nil
 	}
-	if int(record.Id.Int32) != entity.Id() {
-		t.Errorf("eid: %d, want %d", entity.Id(), record.Id.Int32)
+	eid, err := e.Id()
+	if err != nil {
+		t.Error(err)
+		return nil
 	}
-	if record.Path() != wantPath {
-		t.Errorf("recorded path: %s, want %s", record.Path(), wantPath)
+	if int(record.Id.Int32) != eid {
+		t.Errorf("eid: %d, want %d", eid, record.Id.Int32)
+	}
+	recordPath, err := record.Path()
+	if err != nil {
+		t.Error(err)
+		return nil
+	}
+	if recordPath != wantPath {
+		t.Errorf("recorded path: %s, want %s", recordPath, wantPath)
 	}
 	if record.Name != name {
 		t.Errorf("recorded name: %s, want %s", record.Name, name)
@@ -190,21 +224,31 @@ func verifyUserRecord(t *testing.T, entity SmartPath, uid uint64, name string, p
 	if record.Uid != uid {
 		t.Errorf("uid: %d, want %d", record.Uid, uid)
 	}
-	return entity.(*UserEntity)
+	return e.(*entity.UserEntity)
 }
 
-func verifyLstRecord(t *testing.T, entity SmartPath, lid int64, name string, parentDir string) {
+func verifyLstRecord(t *testing.T, e entity.Entity, lid int64, name string, parentDir string) {
 	wantPath := filepath.Join(parentDir, name)
 	record, err := database.LocateLstEntity(db, lid, parentDir)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	if int(record.Id.Int32) != entity.Id() {
-		t.Errorf("eid: %d, want %d", entity.Id(), record.Id.Int32)
+	eid, err := e.Id()
+	if err != nil {
+		t.Error(err)
+		return
 	}
-	if record.Path() != wantPath {
-		t.Errorf("recorded path: %s, want %s", record.Path(), wantPath)
+	if int(record.Id.Int32) != eid {
+		t.Errorf("eid: %d, want %d", eid, record.Id.Int32)
+	}
+	recordPath, err := record.Path()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if recordPath != wantPath {
+		t.Errorf("recorded path: %s, want %s", recordPath, wantPath)
 	}
 	if record.Name != name {
 		t.Errorf("recorded name: %s, want %s", record.Name, name)
@@ -214,30 +258,27 @@ func verifyLstRecord(t *testing.T, entity SmartPath, lid int64, name string, par
 	}
 }
 
-func testSyncUser(t *testing.T, name string, uid int, parentdir string, exist bool) *UserEntity {
-	ue, err := NewUserEntity(db, uint64(uid), parentdir)
+func testSyncUser(t *testing.T, name string, uid int, parentdir string, exist bool) *entity.UserEntity {
+	ue, err := entity.NewUserEntity(db, uint64(uid), parentdir)
 	if err != nil {
 		t.Error(err)
 		return nil
 	}
 
-	// 创建状态正确
-	if ue.created && !exist {
+	if ue.Recorded() && !exist {
 		t.Errorf("ue.created = true, want false")
-	} else if !ue.created && exist {
+	} else if !ue.Recorded() && exist {
 		t.Errorf("ue.created = false, want true")
 	}
 
-	if err := syncPath(ue, name); err != nil {
+	if err := entity.Sync(ue, name); err != nil {
 		t.Error(err)
 		return nil
 	}
 
-	// 测试同步后路径
 	wantPath := filepath.Join(parentdir, name)
 	verifyDir(t, ue, wantPath)
 
-	// 记录正确
 	verifyUserRecord(t, ue, uint64(uid), name, parentdir)
 
 	if ue.Uid() != uint64(uid) {
@@ -246,30 +287,27 @@ func testSyncUser(t *testing.T, name string, uid int, parentdir string, exist bo
 	return ue
 }
 
-func testSyncList(t *testing.T, name string, lid int, parentDir string, exist bool) *ListEntity {
-	le, err := NewListEntity(db, int64(lid), parentDir)
+func testSyncList(t *testing.T, name string, lid int, parentDir string, exist bool) *entity.ListEntity {
+	le, err := entity.NewListEntity(db, int64(lid), parentDir)
 	if err != nil {
 		t.Error(err)
 		return nil
 	}
 
-	// 创建状态正确
-	if le.created && !exist {
+	if le.Recorded() && !exist {
 		t.Errorf("ue.created = true, want false")
-	} else if !le.created && exist {
+	} else if !le.Recorded() && exist {
 		t.Errorf("ue.created = false, want true")
 	}
 
-	if err := syncPath(le, name); err != nil {
+	if err := entity.Sync(le, name); err != nil {
 		t.Error(err)
 		return nil
 	}
 
-	// 测试同步后路径
 	wantPath := filepath.Join(parentDir, name)
 	verifyDir(t, le, wantPath)
 
-	// 记录正确
 	verifyLstRecord(t, le, int64(lid), name, parentDir)
 	return le
 }

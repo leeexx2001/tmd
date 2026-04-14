@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	log "github.com/sirupsen/logrus"
+
 	"github.com/go-resty/resty/v2"
 	"github.com/tidwall/gjson"
 )
@@ -59,34 +61,34 @@ func getNextCursorSafe(entries gjson.Result) (string, error) {
 	return "", nil
 }
 
-func getItemContentFromModuleItem(moduleItem gjson.Result) gjson.Result {
+func getItemContentFromModuleItem(moduleItem gjson.Result) (gjson.Result, error) {
 	res := moduleItem.Get("item.itemContent")
 	if !res.Exists() {
-		panic(fmt.Errorf("invalid ModuleItem: %s", moduleItem.String()))
+		return gjson.Result{}, fmt.Errorf("invalid ModuleItem: %s", moduleItem.String())
 	}
-	return res
+	return res, nil
 }
 
-func getItemContentsFromEntry(entry gjson.Result) []gjson.Result {
+func getItemContentsFromEntry(entry gjson.Result) ([]gjson.Result, error) {
 	content := entry.Get("content")
 	switch content.Get("entryType").String() {
 	case "TimelineTimelineModule":
-		return content.Get("items.#.item.itemContent").Array()
+		return content.Get("items.#.item.itemContent").Array(), nil
 	case "TimelineTimelineItem":
-		return []gjson.Result{content.Get("itemContent")}
+		return []gjson.Result{content.Get("itemContent")}, nil
 	default:
-		panic(fmt.Sprintf("invalid entry: %s", entry.String()))
+		return nil, fmt.Errorf("invalid entry: %s", entry.String())
 	}
 }
 
-func getResults(itemContent gjson.Result, itemType int) gjson.Result {
+func getResults(itemContent gjson.Result, itemType int) (gjson.Result, error) {
 	switch itemType {
 	case timelineTweet:
-		return itemContent.Get("tweet_results")
+		return itemContent.Get("tweet_results"), nil
 	case timelineUser:
-		return itemContent.Get("user_results")
+		return itemContent.Get("user_results"), nil
 	default:
-		panic(fmt.Sprintf("invalid itemContent: %s", itemContent.String()))
+		return gjson.Result{}, fmt.Errorf("invalid itemContent: %s", itemContent.String())
 	}
 }
 
@@ -128,13 +130,23 @@ func getTimelineItemContents(ctx context.Context, api timelineApi, client *resty
 	if entries.IsArray() {
 		for _, entry := range entries.Array() {
 			if entry.Get("content.entryType").String() != "TimelineTimelineCursor" {
-				itemContents = append(itemContents, getItemContentsFromEntry(entry)...)
+				contents, err := getItemContentsFromEntry(entry)
+				if err != nil {
+					log.Debugln("getItemContentsFromEntry failed:", err)
+					continue
+				}
+				itemContents = append(itemContents, contents...)
 			}
 		}
 	}
 	if moduleItems.IsArray() {
 		for _, moduleItem := range moduleItems.Array() {
-			itemContents = append(itemContents, getItemContentFromModuleItem(moduleItem))
+			content, err := getItemContentFromModuleItem(moduleItem)
+			if err != nil {
+				log.Debugln("getItemContentFromModuleItem failed:", err)
+				continue
+			}
+			itemContents = append(itemContents, content)
 		}
 	}
 	cursor, err := getNextCursorSafe(entries)
