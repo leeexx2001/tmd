@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -17,6 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
 	name VARCHAR NOT NULL, 
 	protected BOOLEAN NOT NULL, 
 	friends_count INTEGER NOT NULL, 
+	is_accessible BOOLEAN NOT NULL DEFAULT 1,
 	PRIMARY KEY (id), 
 	UNIQUE (screen_name)
 );
@@ -77,6 +79,26 @@ func CreateTables(db *sqlx.DB) {
 	db.MustExec(schema)
 }
 
+// MigrateDatabase 执行数据库迁移
+// 迁移顺序约定：按 migrations slice 中的顺序依次执行，每个迁移语句必须是幂等的（可重复执行不报错）
+// 添加新迁移时，请追加到 slice 末尾，不要修改已有迁移的顺序
+func MigrateDatabase(db *sqlx.DB) error {
+	// 迁移历史：
+	// 1. 添加 is_accessible 列到 users 表（2024-XX-XX）
+	migrations := []string{
+		`ALTER TABLE users ADD COLUMN is_accessible BOOLEAN NOT NULL DEFAULT 1`,
+	}
+
+	for i, migration := range migrations {
+		if _, err := db.Exec(migration); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("migration %d failed: %w", i+1, err)
+			}
+		}
+	}
+	return nil
+}
+
 // handleGetResult 处理单条查询结果，将 sql.ErrNoRows 转换为 nil, nil
 func handleGetResult[T any](result *T, err error) (*T, error) {
 	if err == sql.ErrNoRows {
@@ -102,7 +124,7 @@ func handleInsertWithId(res sql.Result, err error, idScanner func(int64)) error 
 }
 
 func CreateUser(db *sqlx.DB, usr *User) error {
-	stmt := `INSERT INTO Users(id, screen_name, name, protected, friends_count) VALUES(:id, :screen_name, :name, :protected, :friends_count)`
+	stmt := `INSERT INTO Users(id, screen_name, name, protected, friends_count, is_accessible) VALUES(:id, :screen_name, :name, :protected, :friends_count, :is_accessible)`
 	_, err := db.NamedExec(stmt, usr)
 	if err != nil {
 		return fmt.Errorf("failed to create user %d (%s): %w", usr.Id, usr.ScreenName, err)
@@ -126,8 +148,43 @@ func GetUserById(db *sqlx.DB, uid uint64) (*User, error) {
 	return handleGetResult(result, err)
 }
 
+func SetUserAccessible(db *sqlx.DB, uid uint64, accessible bool) error {
+	stmt := `UPDATE users SET is_accessible=? WHERE id=?`
+	result, err := db.Exec(stmt, accessible, uid)
+	if err != nil {
+		return fmt.Errorf("failed to set accessible status for user %d: %w", uid, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user %d: %w", uid, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user %d not found, cannot set accessible status", uid)
+	}
+	return nil
+}
+
+// SetUserAccessibleByScreenName 通过 screen_name 标记用户可访问状态
+// 如果用户存在于数据库中，则更新 is_accessible 并返回 nil
+// 如果用户不存在，返回错误
+func SetUserAccessibleByScreenName(db *sqlx.DB, screenName string, accessible bool) error {
+	stmt := `UPDATE users SET is_accessible=? WHERE screen_name=?`
+	result, err := db.Exec(stmt, accessible, screenName)
+	if err != nil {
+		return fmt.Errorf("failed to set accessible status for user %s: %w", screenName, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user %s: %w", screenName, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user %s not found, cannot set accessible status", screenName)
+	}
+	return nil
+}
+
 func UpdateUser(db *sqlx.DB, usr *User) error {
-	stmt := `UPDATE users SET screen_name=:screen_name, name=:name, protected=:protected, friends_count=:friends_count WHERE id=:id`
+	stmt := `UPDATE users SET screen_name=:screen_name, name=:name, protected=:protected, friends_count=:friends_count, is_accessible=:is_accessible WHERE id=:id`
 	_, err := db.NamedExec(stmt, usr)
 	if err != nil {
 		return fmt.Errorf("failed to update user %d: %w", usr.Id, err)

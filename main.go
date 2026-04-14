@@ -50,19 +50,44 @@ type userArgs struct {
 	screenName []string
 }
 
-func (u *userArgs) GetUser(ctx context.Context, client *resty.Client) ([]*twitter.User, error) {
+func (u *userArgs) GetUser(ctx context.Context, client *resty.Client, db *sqlx.DB) ([]*twitter.User, error) {
 	users := []*twitter.User{}
 	for _, id := range u.id {
-		usr, err := twitter.GetUserById(ctx, client, id)
+		usr, uid, err := twitter.GetUserById(ctx, client, id)
 		if err != nil {
+			// 标记不可访问用户（如果存在于数据库中）
+			if uid > 0 {
+				if markErr := database.SetUserAccessible(db, uid, false); markErr != nil {
+					// 用户不存在时不记录警告（预期行为）
+					if !strings.Contains(markErr.Error(), "not found") {
+						log.Warnln("failed to mark user as inaccessible:", uid, markErr)
+					}
+				}
+			}
 			return nil, err
 		}
 		users = append(users, usr)
 	}
 
 	for _, screenName := range u.screenName {
-		usr, err := twitter.GetUserByScreenName(ctx, client, screenName)
+		usr, uid, err := twitter.GetUserByScreenName(ctx, client, screenName)
 		if err != nil {
+			// 标记不可访问用户（如果存在于数据库中）
+			if uid > 0 {
+				// 通过 ID 标记
+				if markErr := database.SetUserAccessible(db, uid, false); markErr != nil {
+					if !strings.Contains(markErr.Error(), "not found") {
+						log.Warnln("failed to mark user as inaccessible:", uid, markErr)
+					}
+				}
+			} else {
+				// 通过 screen_name 标记（API 不返回 ID 时）
+				if markErr := database.SetUserAccessibleByScreenName(db, screenName, false); markErr != nil {
+					if !strings.Contains(markErr.Error(), "not found") {
+						log.Warnln("failed to mark user as inaccessible by screen_name:", screenName, markErr)
+					}
+				}
+			}
 			return nil, err
 		}
 		users = append(users, usr)
@@ -167,12 +192,12 @@ func printTask(task *Task) {
 	}
 }
 
-func MakeTask(ctx context.Context, client *resty.Client, usrArgs userArgs, listArgs ListArgs, follArgs userArgs) (*Task, error) {
+func MakeTask(ctx context.Context, client *resty.Client, db *sqlx.DB, usrArgs userArgs, listArgs ListArgs, follArgs userArgs) (*Task, error) {
 	task := Task{}
 	task.users = make([]*twitter.User, 0)
 	task.lists = make([]twitter.ListBase, 0)
 
-	users, err := usrArgs.GetUser(ctx, client)
+	users, err := usrArgs.GetUser(ctx, client, db)
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +212,7 @@ func MakeTask(ctx context.Context, client *resty.Client, usrArgs userArgs, listA
 	}
 
 	// fo
-	users, err = follArgs.GetUser(ctx, client)
+	users, err = follArgs.GetUser(ctx, client, db)
 	if err != nil {
 		return nil, err
 	}
@@ -391,19 +416,19 @@ func main() {
 	}
 	log.Infoln("loaded previous failed tweets:", dumper.Count())
 
-	// collect tasks
-	task, err := MakeTask(ctx, client, usrArgs, listArgs, follArgs)
-	if err != nil {
-		log.Fatalln("failed to parse cmd args:", err)
-	}
-
-	// connect db
+	// connect db first (needed for GetUser to mark inaccessible users)
 	db, err := connectDatabase(pathHelper.db)
 	if err != nil {
 		log.Fatalln("failed to connect to database:", err)
 	}
 	defer db.Close()
 	log.Infoln("database is connected")
+
+	// collect tasks
+	task, err := MakeTask(ctx, client, db, usrArgs, listArgs, follArgs)
+	if err != nil {
+		log.Fatalln("failed to parse cmd args:", err)
+	}
 
 	// listen signal
 	sigChan := make(chan os.Signal, 1)
@@ -551,7 +576,7 @@ func connectDatabase(path string) (*sqlx.DB, error) {
 		return nil, err
 	}
 	database.CreateTables(db)
-	//db.SetMaxOpenConns(1)
+	database.MigrateDatabase(db)
 	if !ex {
 		log.Debugln("created new db file", path)
 	}
@@ -812,12 +837,13 @@ func handleProfileDownload(ctx context.Context, client *resty.Client, additional
 			log.WithError(err).Errorln("failed to get profile lists")
 		} else {
 			for _, lst := range lists {
-				members, err := lst.GetMembers(ctx, client)
+				membersResult, err := lst.GetMembers(ctx, client)
 				if err != nil {
 					log.WithError(err).WithField("list", lst.Title()).Errorln("failed to get list members")
 					continue
 				}
-				for _, member := range members {
+
+				for _, member := range membersResult.Users {
 					requests = append(requests, profile.DownloadRequest{
 						ScreenName:  member.ScreenName,
 						UserTitle:   member.Title(),
@@ -839,12 +865,13 @@ func handleProfileDownload(ctx context.Context, client *resty.Client, additional
 
 	if len(task.lists) > 0 {
 		for _, lst := range task.lists {
-			members, err := lst.GetMembers(ctx, client)
+			membersResult, err := lst.GetMembers(ctx, client)
 			if err != nil {
 				log.WithError(err).WithField("list", lst.Title()).Errorln("failed to get list members for profile")
 				continue
 			}
-			for _, member := range members {
+
+			for _, member := range membersResult.Users {
 				requests = append(requests, profile.DownloadRequest{
 					ScreenName:  member.ScreenName,
 					UserTitle:   member.Title(),

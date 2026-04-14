@@ -39,43 +39,53 @@ type User struct {
 	CreatedAt    string // 账号创建时间
 }
 
-func GetUserById(ctx context.Context, client *resty.Client, id uint64) (*User, error) {
+func GetUserById(ctx context.Context, client *resty.Client, id uint64) (*User, uint64, error) {
 	api := userByRestId{id}
 	getUrl := makeUrl(&api)
-	r, err := getUser(ctx, client, getUrl)
+	r, uid, err := getUser(ctx, client, getUrl)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user [%d]: %v", id, err)
+		// 返回 uid（可能是从 UserUnavailable 中提取的ID）用于标记不可访问状态
+		return nil, uid, fmt.Errorf("failed to get user [%d]: %v", id, err)
 	}
-	return r, err
+	return r, uid, err
 }
 
-func GetUserByScreenName(ctx context.Context, client *resty.Client, screenName string) (*User, error) {
+func GetUserByScreenName(ctx context.Context, client *resty.Client, screenName string) (*User, uint64, error) {
 	u := makeUrl(&userByScreenName{screenName: screenName})
-	r, err := getUser(ctx, client, u)
+	r, uid, err := getUser(ctx, client, u)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get user [%s]: %v", screenName, err)
+		// 注意：通过 screen_name 查询时，UserUnavailable 响应不包含 rest_id
+		// 所以 uid 可能为 0，调用方需要检查
+		return nil, uid, fmt.Errorf("failed to get user [%s]: %v", screenName, err)
 	}
-	return r, err
+	return r, uid, err
 }
 
-func getUser(ctx context.Context, client *resty.Client, url string) (*User, error) {
+func getUser(ctx context.Context, client *resty.Client, url string) (*User, uint64, error) {
 	resp, err := client.R().SetContext(ctx).Get(url)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if err := CheckApiResp(resp.Body()); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	return parseRespJson(resp.Body())
 }
 
-func parseUserResults(user_results *gjson.Result) (*User, error) {
+func parseUserResults(user_results *gjson.Result) (*User, uint64, error) {
 	result := user_results.Get("result")
 	if !result.Exists() {
-		return nil, fmt.Errorf("user result does not exist")
+		return nil, 0, fmt.Errorf("user result does not exist")
 	}
 	if result.Get("__typename").String() == "UserUnavailable" {
-		return nil, fmt.Errorf("user unavaiable")
+		// 返回不可访问用户的 ID，用于标记状态
+		if restId := result.Get("rest_id"); restId.Exists() {
+			log.Debugf("UserUnavailable detected, rest_id: %s", restId.String())
+			return nil, restId.Uint(), fmt.Errorf("user unavaiable")
+		}
+		// 尝试从其他字段获取ID
+		log.Debugf("UserUnavailable result: %s", result.String())
+		return nil, 0, fmt.Errorf("user unavaiable")
 	}
 	legacy := result.Get("legacy")
 
@@ -140,13 +150,13 @@ func parseUserResults(user_results *gjson.Result) (*User, error) {
 		usr.CreatedAt = created.String()
 	}
 
-	return &usr, nil
+	return &usr, usr.Id, nil
 }
 
-func parseRespJson(resp []byte) (*User, error) {
+func parseRespJson(resp []byte) (*User, uint64, error) {
 	user := gjson.GetBytes(resp, "data.user")
 	if !user.Exists() {
-		return nil, fmt.Errorf("user does not exist or is not accessible")
+		return nil, 0, fmt.Errorf("user does not exist or is not accessible")
 	}
 	return parseUserResults(&user)
 }

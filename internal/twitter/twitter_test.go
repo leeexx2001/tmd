@@ -53,13 +53,14 @@ func TestGetUser(t *testing.T) {
 	for _, test := range someUsers {
 		var u *User = nil
 		var err error
+		var uid uint64
 		if test.id != 0 {
-			u, err = GetUserById(ctx, client, test.id)
+			u, uid, err = GetUserById(ctx, client, test.id)
 		} else {
-			u, err = GetUserByScreenName(ctx, client, test.screenName)
+			u, uid, err = GetUserByScreenName(ctx, client, test.screenName)
 		}
 		if err != nil {
-			t.Error("failed to get user:", err)
+			t.Errorf("failed to get user (uid=%d): %v", uid, err)
 			continue
 		}
 
@@ -106,7 +107,7 @@ func TestGetMedia(t *testing.T) {
 
 	routine := func(test string) {
 		defer wg.Done()
-		usr, err := GetUserByScreenName(ctx, client, test)
+		usr, _, err := GetUserByScreenName(ctx, client, test)
 		if err != nil {
 			t.Error(err)
 			return
@@ -197,23 +198,23 @@ func TestGetMember(t *testing.T) {
 			return
 		}
 
-		users, err := lst.GetMembers(ctx, client)
+		usersResult, err := lst.GetMembers(ctx, client)
 		if err != nil {
 			t.Error(err)
 			return
 		}
+		users := usersResult.Users
 		if len(users) > lst.MemberCount || lst.MemberCount-len(users) > lst.MemberCount*2/100 {
 			t.Errorf("len(users) == %d, want %d", len(users), lst.MemberCount)
 		}
 
-		// following
 		fo := UserFollowing{lst.Creator}
-		users, err = fo.GetMembers(ctx, client)
+		usersResult, err = fo.GetMembers(ctx, client)
 		if err != nil {
 			t.Error(err)
 			return
 		}
-		//t.Logf("usr %s following count: %d\n", fo.creator.Title(), len(users))
+		users = usersResult.Users
 		if len(users) > fo.creator.FriendsCount || fo.creator.FriendsCount-len(users) > fo.creator.FriendsCount*2/100 {
 			t.Errorf("len(users) == %d, want %d", len(users), fo.creator.FriendsCount)
 		}
@@ -345,8 +346,8 @@ func TestApiError(t *testing.T) {
 }
 
 func TestFollowUser(t *testing.T) {
-	user, err := GetUserByScreenName(context.Background(), client, "su1__cos")
-	//user, err := GetUserByScreenName(context.Background(), client, "neco__nemu")
+	user, _, err := GetUserByScreenName(context.Background(), client, "su1__cos")
+	//user, _, err := GetUserByScreenName(context.Background(), client, "neco__nemu")
 	if err != nil {
 		t.Error(err)
 		return
@@ -355,7 +356,7 @@ func TestFollowUser(t *testing.T) {
 		t.Error(err)
 	}
 
-	user, err = GetUserByScreenName(context.Background(), client, "su1__cos")
+	user, _, err = GetUserByScreenName(context.Background(), client, "su1__cos")
 	if err != nil {
 		t.Error(err)
 		return

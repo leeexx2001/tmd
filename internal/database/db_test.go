@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -39,6 +40,7 @@ func generateUser(n int) *User {
 	name := fmt.Sprintf("user%d", n)
 	usr.ScreenName = name
 	usr.Name = name
+	usr.IsAccessible = true
 	return usr
 }
 func TestUserOperation(t *testing.T) {
@@ -570,4 +572,335 @@ func BenchmarkUpdateUser12(b *testing.B) {
 
 func BenchmarkUpdateUser24(b *testing.B) {
 	benchmarkUpdateUser(b, 24)
+}
+
+func TestSetUserAccessible(t *testing.T) {
+	db = opentmpdb()
+	defer db.Close()
+
+	t.Run("update_existing_user_to_inaccessible", func(t *testing.T) {
+		usr := generateUser(1)
+		if err := CreateUser(db, usr); err != nil {
+			t.Fatalf("failed to create user: %v", err)
+		}
+
+		if err := SetUserAccessible(db, usr.Id, false); err != nil {
+			t.Fatalf("SetUserAccessible failed: %v", err)
+		}
+
+		retrieved, err := GetUserById(db, usr.Id)
+		if err != nil {
+			t.Fatalf("GetUserById failed: %v", err)
+		}
+		if retrieved.IsAccessible != false {
+			t.Errorf("IsAccessible = %v, want false", retrieved.IsAccessible)
+		}
+	})
+
+	t.Run("update_existing_user_back_to_accessible", func(t *testing.T) {
+		usr := generateUser(2)
+		usr.IsAccessible = false
+		if err := CreateUser(db, usr); err != nil {
+			t.Fatalf("failed to create user: %v", err)
+		}
+
+		if err := SetUserAccessible(db, usr.Id, true); err != nil {
+			t.Fatalf("SetUserAccessible failed: %v", err)
+		}
+
+		retrieved, err := GetUserById(db, usr.Id)
+		if err != nil {
+			t.Fatalf("GetUserById failed: %v", err)
+		}
+		if retrieved.IsAccessible != true {
+			t.Errorf("IsAccessible = %v, want true", retrieved.IsAccessible)
+		}
+	})
+
+	t.Run("error_when_user_not_exists", func(t *testing.T) {
+		newUID := uint64(99999)
+
+		err := SetUserAccessible(db, newUID, false)
+		if err == nil {
+			t.Fatal("expected error for non-existent user, got nil")
+		}
+
+		expectedMsg := "user 99999 not found"
+		if !strings.Contains(err.Error(), expectedMsg) {
+			t.Errorf("error message = %q, want to contain %q", err.Error(), expectedMsg)
+		}
+
+		// 确认用户确实没有被创建
+		retrieved, err := GetUserById(db, newUID)
+		if err != nil {
+			t.Fatalf("GetUserById failed: %v", err)
+		}
+		if retrieved != nil {
+			t.Error("user should not be created when SetUserAccessible returns error")
+		}
+	})
+
+	t.Run("idempotent_on_same_value", func(t *testing.T) {
+		usr := generateUser(3)
+		if err := CreateUser(db, usr); err != nil {
+			t.Fatalf("failed to create user: %v", err)
+		}
+
+		if err := SetUserAccessible(db, usr.Id, true); err != nil {
+			t.Fatalf("first SetUserAccessible failed: %v", err)
+		}
+		if err := SetUserAccessible(db, usr.Id, true); err != nil {
+			t.Fatalf("second SetUserAccessible (same value) failed: %v", err)
+		}
+
+		retrieved, err := GetUserById(db, usr.Id)
+		if err != nil {
+			t.Fatalf("GetUserById failed: %v", err)
+		}
+		if retrieved.IsAccessible != true {
+			t.Errorf("IsAccessible = %v, want true after idempotent update", retrieved.IsAccessible)
+		}
+	})
+}
+
+func TestSetUserAccessibleConcurrent(t *testing.T) {
+	db = opentmpdb()
+	defer db.Close()
+
+	const n = 100
+	for i := 0; i < n; i++ {
+		usr := &User{
+			Id:           uint64(i),
+			ScreenName:   fmt.Sprintf("concurrent_user_%d", i),
+			Name:         fmt.Sprintf("Concurrent User %d", i),
+			IsProtected:  false,
+			FriendsCount: 0,
+			IsAccessible: true,
+		}
+		if err := CreateUser(db, usr); err != nil {
+			t.Fatalf("failed to pre-create user %d: %v", i, err)
+		}
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(uid uint64) {
+			defer wg.Done()
+			if err := SetUserAccessible(db, uid, uid%2 == 0); err != nil {
+				t.Error(err)
+			}
+		}(uint64(i))
+	}
+	wg.Wait()
+
+	for i := 0; i < n; i++ {
+		usr, err := GetUserById(db, uint64(i))
+		if err != nil {
+			t.Errorf("GetUserById(%d) failed: %v", i, err)
+			continue
+		}
+		if usr == nil {
+			t.Errorf("user %d should exist after concurrent SetUserAccessible", i)
+			continue
+		}
+		expected := i%2 == 0
+		if usr.IsAccessible != expected {
+			t.Errorf("user %d: IsAccessible = %v, want %v", i, usr.IsAccessible, expected)
+		}
+	}
+}
+
+func TestMigrateDatabase(t *testing.T) {
+	t.Run("migrate_old_table_without_is_accessible", func(t *testing.T) {
+		tmpFile, err := os.CreateTemp("", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := tmpFile.Name()
+		tmpFile.Close()
+
+		oldDB, err := sqlx.Connect("sqlite3", fmt.Sprintf("file:%s?_journal_mode=WAL&cache=shared", path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer oldDB.Close()
+
+		oldSchema := `
+CREATE TABLE users (
+	id INTEGER NOT NULL, 
+	screen_name VARCHAR NOT NULL, 
+	name VARCHAR NOT NULL, 
+	protected BOOLEAN NOT NULL, 
+	friends_count INTEGER NOT NULL, 
+	PRIMARY KEY (id), 
+	UNIQUE (screen_name)
+);
+`
+		oldDB.MustExec(oldSchema)
+
+		insertStmt := `INSERT INTO users(id, screen_name, name, protected, friends_count) VALUES(1, 'olduser', 'Old User', 0, 100)`
+		oldDB.MustExec(insertStmt)
+
+		var accessibleExists int
+		err = oldDB.Get(&accessibleExists, "SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='is_accessible'")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if accessibleExists != 0 {
+			t.Fatal("old table should not have is_accessible column before migration")
+		}
+
+		if err := MigrateDatabase(oldDB); err != nil {
+			t.Fatalf("MigrateDatabase failed: %v", err)
+		}
+
+		err = oldDB.Get(&accessibleExists, "SELECT COUNT(*) FROM pragma_table_info('users') WHERE name='is_accessible'")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if accessibleExists != 1 {
+			t.Fatal("is_accessible column should exist after migration")
+		}
+
+		var isAccessible bool
+		err = oldDB.Get(&isAccessible, "SELECT is_accessible FROM users WHERE id=1")
+		if err != nil {
+			t.Fatalf("failed to query is_accessible after migration: %v", err)
+		}
+		if !isAccessible {
+			t.Errorf("existing row should have is_accessible=true (DEFAULT), got %v", isAccessible)
+		}
+	})
+
+	t.Run("idempotent_migration", func(t *testing.T) {
+		testDB := opentmpdb()
+		defer testDB.Close()
+
+		if err := MigrateDatabase(testDB); err != nil {
+			t.Fatalf("first MigrateDatabase failed: %v", err)
+		}
+		if err := MigrateDatabase(testDB); err != nil {
+			t.Fatalf("second MigrateDatabase (idempotent) failed: %v", err)
+		}
+
+		usr := generateUser(42)
+		if err := CreateUser(testDB, usr); err != nil {
+			t.Fatalf("CreateUser after double migration failed: %v", err)
+		}
+		retrieved, err := GetUserById(testDB, usr.Id)
+		if err != nil {
+			t.Fatalf("GetUserById failed: %v", err)
+		}
+		if !retrieved.IsAccessible {
+			t.Errorf("IsAccessible should be true for newly created user after double migration")
+		}
+	})
+}
+
+func TestIsAccessibleInCRUD(t *testing.T) {
+	db = opentmpdb()
+	defer db.Close()
+
+	t.Run("create_with_is_accessible_true", func(t *testing.T) {
+		usr := &User{
+			Id:           100,
+			ScreenName:   "acc_true",
+			Name:         "Acc True",
+			IsProtected:  false,
+			FriendsCount: 50,
+			IsAccessible: true,
+		}
+		if err := CreateUser(db, usr); err != nil {
+			t.Fatalf("CreateUser failed: %v", err)
+		}
+
+		retrieved, _ := GetUserById(db, usr.Id)
+		if retrieved.IsAccessible != true {
+			t.Errorf("after create: IsAccessible = %v, want true", retrieved.IsAccessible)
+		}
+	})
+
+	t.Run("create_with_is_accessible_false", func(t *testing.T) {
+		usr := &User{
+			Id:           101,
+			ScreenName:   "acc_false",
+			Name:         "Acc False",
+			IsProtected:  true,
+			FriendsCount: 0,
+			IsAccessible: false,
+		}
+		if err := CreateUser(db, usr); err != nil {
+			t.Fatalf("CreateUser failed: %v", err)
+		}
+
+		retrieved, _ := GetUserById(db, usr.Id)
+		if retrieved.IsAccessible != false {
+			t.Errorf("after create: IsAccessible = %v, want false", retrieved.IsAccessible)
+		}
+	})
+
+	t.Run("update_is_accessible_flip", func(t *testing.T) {
+		usr := generateUser(102)
+		if err := CreateUser(db, usr); err != nil {
+			t.Fatalf("CreateUser failed: %v", err)
+		}
+
+		usr.IsAccessible = false
+		if err := UpdateUser(db, usr); err != nil {
+			t.Fatalf("UpdateUser failed: %v", err)
+		}
+
+		retrieved, _ := GetUserById(db, usr.Id)
+		if retrieved.IsAccessible != false {
+			t.Errorf("after update to false: IsAccessible = %v, want false", retrieved.IsAccessible)
+		}
+
+		usr.IsAccessible = true
+		if err := UpdateUser(db, usr); err != nil {
+			t.Fatalf("UpdateUser failed: %v", err)
+		}
+
+		retrieved, _ = GetUserById(db, usr.Id)
+		if retrieved.IsAccessible != true {
+			t.Errorf("after update back to true: IsAccessible = %v, want true", retrieved.IsAccessible)
+		}
+	})
+
+	t.Run("update_preserves_other_fields", func(t *testing.T) {
+		usr := &User{
+			Id:           103,
+			ScreenName:   "preserve_test",
+			Name:         "Preserve Test",
+			IsProtected:  true,
+			FriendsCount: 999,
+			IsAccessible: true,
+		}
+		if err := CreateUser(db, usr); err != nil {
+			t.Fatalf("CreateUser failed: %v", err)
+		}
+
+		usr.IsAccessible = false
+		usr.FriendsCount = 123
+		if err := UpdateUser(db, usr); err != nil {
+			t.Fatalf("UpdateUser failed: %v", err)
+		}
+
+		retrieved, _ := GetUserById(db, usr.Id)
+		if retrieved.ScreenName != usr.ScreenName {
+			t.Errorf("ScreenName changed: got %q, want %q", retrieved.ScreenName, usr.ScreenName)
+		}
+		if retrieved.Name != usr.Name {
+			t.Errorf("Name changed: got %q, want %q", retrieved.Name, usr.Name)
+		}
+		if retrieved.IsProtected != usr.IsProtected {
+			t.Errorf("IsProtected changed: got %v, want %v", retrieved.IsProtected, usr.IsProtected)
+		}
+		if retrieved.FriendsCount != usr.FriendsCount {
+			t.Errorf("FriendsCount changed: got %d, want %d", retrieved.FriendsCount, usr.FriendsCount)
+		}
+		if retrieved.IsAccessible != usr.IsAccessible {
+			t.Errorf("IsAccessible mismatch: got %v, want %v", retrieved.IsAccessible, usr.IsAccessible)
+		}
+	})
 }

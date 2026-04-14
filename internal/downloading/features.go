@@ -439,7 +439,7 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 }
 
 // 更新数据库中对用户的记录
-func syncUser(db *sqlx.DB, user *twitter.User) error {
+func syncUser(db *sqlx.DB, user *twitter.User, accessible bool) error {
 	renamed := false
 	isNew := false
 	usrdb, err := database.GetUserById(db, user.Id)
@@ -459,6 +459,7 @@ func syncUser(db *sqlx.DB, user *twitter.User) error {
 	usrdb.IsProtected = user.IsProtected
 	usrdb.Name = user.Name
 	usrdb.ScreenName = user.ScreenName
+	usrdb.IsAccessible = accessible
 
 	if isNew {
 		err = database.CreateUser(db, usrdb)
@@ -521,7 +522,7 @@ func DownloadUser(ctx context.Context, db *sqlx.DB, client *resty.Client, user *
 }
 
 func syncUserAndEntity(db *sqlx.DB, user *twitter.User, dir string) (*entity.UserEntity, error) {
-	if err := syncUser(db, user); err != nil {
+	if err := syncUser(db, user, true); err != nil {
 		return nil, err
 	}
 	userNaming := naming.NewUserNaming(user.Name, user.ScreenName)
@@ -924,8 +925,8 @@ func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list t
 		return nil, err
 	}
 
-	members, err := list.GetMembers(ctx, client)
-	if err != nil || len(members) == 0 {
+	membersResult, err := list.GetMembers(ctx, client)
+	if err != nil {
 		return nil, err
 	}
 
@@ -933,12 +934,16 @@ func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list t
 	if err != nil {
 		return nil, err
 	}
+
+	members := membersResult.Users
+	if len(members) == 0 {
+		return nil, nil
+	}
 	log.Debugln("members:", len(members))
 	packgedUsers := make([]userInLstEntity, len(members))
 	for i, user := range members {
 		packgedUsers[i] = userInLstEntity{user: user, leid: &eid}
 	}
-	// 列表下载时，强制启用自动关注关注未关注的私密用户
 	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, true, additional, dwn)
 }
 
@@ -970,7 +975,6 @@ func syncLstAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB
 		}
 	}
 
-	// update lst path and record
 	expectedTitle := utils.WinFileName(lst.Title())
 	ent, err := entity.NewListEntity(db, lst.GetId(), dir)
 	if err != nil {
@@ -980,17 +984,21 @@ func syncLstAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB
 		return nil, err
 	}
 
-	// get all members
-	members, err := lst.GetMembers(ctx, client)
-	if err != nil || len(members) == 0 {
+	membersResult, err := lst.GetMembers(ctx, client)
+	if err != nil {
 		return nil, err
 	}
 
-	// 同步列表成员，清理已删除的用户链接
 	eid, err := ent.Id()
 	if err != nil {
 		return nil, err
 	}
+
+	members := membersResult.Users
+	if len(members) == 0 {
+		return nil, nil
+	}
+
 	memberIDs := make([]uint64, len(members))
 	for i, u := range members {
 		memberIDs[i] = u.Id
@@ -1000,7 +1008,6 @@ func syncLstAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB
 		log.Warnln("failed to sync list members for", lst.Title(), ":", err)
 	}
 
-	// bind lst entity to users for creating symlink
 	packgedUsers := make([]userInLstEntity, 0, len(members))
 	for _, user := range members {
 		packgedUsers = append(packgedUsers, userInLstEntity{user: user, leid: &eid})
@@ -1099,9 +1106,8 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 			continue
 		}
 
-		members, err := lst.GetMembers(ctx, client)
+		membersResult, err := lst.GetMembers(ctx, client)
 		if err != nil {
-			// 检查是否是列表不存在或无法访问的错误
 			errStr := err.Error()
 			if strings.Contains(errStr, "does not exist or is not accessible") ||
 				strings.Contains(errStr, "unable to get timeline data") {
@@ -1110,7 +1116,8 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 			log.Warnln("✗", lst.Title(), "-", "failed to get list members:", err)
 			continue
 		}
-		for _, user := range members {
+
+		for _, user := range membersResult.Users {
 			if err := context.Cause(ctx); err != nil {
 				return results, err
 			}

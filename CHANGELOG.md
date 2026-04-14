@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.8.0] - 2026-04-12
+
+### Added
+
+#### 新增用户可访问状态记录功能
+
+在 `users` 表中新增 `is_accessible` 字段，用于记录 Twitter 用户是否可通过 API 正常访问（非封禁/注销状态）：
+
+| 文件 | 变更 |
+|------|------|
+| `internal/database/model.go` | 新增 `IsAccessible` 字段 |
+| `internal/database/crud.go` | 新增 `UpdateUserAccessible()` 方法 |
+| `internal/database/db_test.go` | 新增测试用例 |
+
+**核心功能：**
+- 区分可访问/不可访问用户：识别 Twitter API 返回的 `UserUnavailable` 类型
+- 自动更新：每次获取列表成员时同步更新数据库中的访问状态
+- 向后兼容：对已有 `foo.db` 数据库无破坏性影响
+
+**调用链路：**
+```
+main.go (handleProfileDownload)
+    └── lst.GetMembers()
+        └── downloading/features.go
+            ├── downloadList()
+            ├── syncLstAndGetMembers()
+            └── MarkUsersAsDownloaded()
+```
+
+#### 新增文档
+
+- `doc/user-accessible-status-changelog.md` - 用户可访问状态记录功能说明
+
+### Changed
+
+#### 数据库层 (`internal/database/`)：
+- `crud.go` - 新增用户可访问状态更新方法，扩展错误处理
+
+#### 下载层 (`internal/downloading/`)：
+- `features.go` - 集成用户可访问状态检测逻辑
+
+#### Twitter API 层 (`internal/twitter/`)：
+- `list.go` - 列表成员获取逻辑优化
+- `tweet.go` - 推文处理优化
+- `user.go` - 用户数据处理优化
+- `twitter_test.go` - 测试用例更新
+
+#### 主程序 (`main.go`)：
+- 优化配置和错误处理
+- 集成用户可访问状态功能
+
+---
+
 ## [2.7.0] - 2026-04-12
 
 ### Added

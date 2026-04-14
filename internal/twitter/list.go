@@ -10,9 +10,13 @@ import (
 )
 
 type ListBase interface {
-	GetMembers(context.Context, *resty.Client) ([]*User, error)
+	GetMembers(context.Context, *resty.Client) (*MembersResult, error)
 	GetId() int64
 	Title() string
+}
+
+type MembersResult struct {
+	Users []*User
 }
 
 type List struct {
@@ -55,7 +59,7 @@ func parseList(list *gjson.Result) (*List, error) {
 
 	user_results := list.Get("user_results")
 	if user_results.Exists() {
-		if creator, err := parseUserResults(&user_results); err == nil {
+		if creator, _, err := parseUserResults(&user_results); err == nil {
 			result.Creator = creator
 		}
 	}
@@ -63,37 +67,50 @@ func parseList(list *gjson.Result) (*List, error) {
 	return &result, nil
 }
 
-func itemContentsToUsers(itemContents []gjson.Result) []*User {
-	users := make([]*User, 0, len(itemContents))
-	for _, ic := range itemContents {
-		user_results, err := getResults(ic, timelineUser)
-		if err != nil {
-			log.Debugln("getResults failed:", err)
-			continue
-		}
-		if user_results.String() == "{}" {
-			continue
-		}
-		u, err := parseUserResults(&user_results)
-		if err != nil {
-			log.Debugln("user_results parse failed:", err, "- data:", user_results.String())
-			continue
-		}
-		users = append(users, u)
+func parseItemContentToUser(ic gjson.Result) (*User, error) {
+	user_results, err := getResults(ic, timelineUser)
+	if err != nil {
+		return nil, err
 	}
-	return users
+	if user_results.String() == "{}" {
+		return nil, fmt.Errorf("empty user results")
+	}
+
+	u, _, err := parseUserResults(&user_results)
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
 }
 
-func getMembers(ctx context.Context, client *resty.Client, api timelineApi, instsPath string) ([]*User, error) {
+func itemContentsToUsers(itemContents []gjson.Result) MembersResult {
+	result := MembersResult{
+		Users: make([]*User, 0, len(itemContents)),
+	}
+	for _, ic := range itemContents {
+		user, err := parseItemContentToUser(ic)
+		if err != nil {
+			log.Debugln("parseItemContentToUser failed:", err)
+			continue
+		}
+		if user != nil {
+			result.Users = append(result.Users, user)
+		}
+	}
+	return result
+}
+
+func getMembers(ctx context.Context, client *resty.Client, api timelineApi, instsPath string) (*MembersResult, error) {
 	api.SetCursor("")
 	itemContents, err := getTimelineItemContentsTillEnd(ctx, api, client, instsPath)
 	if err != nil {
 		return nil, err
 	}
-	return itemContentsToUsers(itemContents), nil
+	result := itemContentsToUsers(itemContents)
+	return &result, nil
 }
 
-func (list *List) GetMembers(ctx context.Context, client *resty.Client) ([]*User, error) {
+func (list *List) GetMembers(ctx context.Context, client *resty.Client) (*MembersResult, error) {
 	api := listMembers{}
 	api.count = 200
 	api.id = list.Id
@@ -112,7 +129,7 @@ type UserFollowing struct {
 	creator *User
 }
 
-func (fo UserFollowing) GetMembers(ctx context.Context, client *resty.Client) ([]*User, error) {
+func (fo UserFollowing) GetMembers(ctx context.Context, client *resty.Client) (*MembersResult, error) {
 	api := following{}
 	api.count = 200
 	api.uid = fo.creator.Id

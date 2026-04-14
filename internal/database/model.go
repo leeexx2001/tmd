@@ -14,6 +14,7 @@ type User struct {
 	Name         string `db:"name"`
 	IsProtected  bool   `db:"protected"`
 	FriendsCount int    `db:"friends_count"`
+	IsAccessible bool   `db:"is_accessible"`
 }
 
 type UserEntity struct {

@@ -156,6 +156,15 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 		profile, err = pd.fetcher.FetchProfile(ctx, req.ScreenName)
 		if err != nil {
 			result.Error = fmt.Errorf("failed to fetch profile: %w", err)
+			// 标记不可访问用户（如果存在于数据库中）
+			if pd.db != nil {
+				if markErr := database.SetUserAccessibleByScreenName(pd.db, req.ScreenName, false); markErr != nil {
+					// 用户不存在时不记录警告（预期行为）
+					if !strings.Contains(markErr.Error(), "not found") {
+						log.Warnln("failed to mark user as inaccessible by screen_name:", req.ScreenName, markErr)
+					}
+				}
+			}
 			return result, result.Error
 		}
 	} else {
@@ -255,6 +264,7 @@ func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, 
 	usrdb.IsProtected = profile.Protected
 	usrdb.Name = profile.Name
 	usrdb.ScreenName = screenName
+	usrdb.IsAccessible = true
 
 	if isNew {
 		if err = database.CreateUser(pd.db, usrdb); err != nil {

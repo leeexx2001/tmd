@@ -44,7 +44,7 @@ func parseTweetResults(tweet_results *gjson.Result) (*Tweet, error) {
 		tweet.Text = html.UnescapeString(legacy.Get("full_text").String())
 	}
 
-	tweet.Creator, _ = parseUserResults(&user_results)
+	tweet.Creator, _, _ = parseUserResults(&user_results)
 	tweet.CreatedAt, err = time.Parse(time.RubyDate, legacy.Get("created_at").String())
 	if err != nil {
 		return nil, fmt.Errorf("invalid time format %v", err)
