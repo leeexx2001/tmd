@@ -843,6 +843,10 @@ func handleProfileDownload(ctx context.Context, client *resty.Client, additional
 					continue
 				}
 
+				// 标记列表成员为可访问
+				uids := utils.ExtractIDs(membersResult.Users, func(u *twitter.User) uint64 { return u.Id })
+				database.MarkListMembersAccessibleByIDs(db, uids)
+
 				for _, member := range membersResult.Users {
 					requests = append(requests, profile.DownloadRequest{
 						ScreenName:  member.ScreenName,
@@ -870,6 +874,10 @@ func handleProfileDownload(ctx context.Context, client *resty.Client, additional
 				log.WithError(err).WithField("list", lst.Title()).Errorln("failed to get list members for profile")
 				continue
 			}
+
+			// 标记列表成员为可访问
+			uids := utils.ExtractIDs(membersResult.Users, func(u *twitter.User) uint64 { return u.Id })
+			database.MarkListMembersAccessibleByIDs(db, uids)
 
 			for _, member := range membersResult.Users {
 				requests = append(requests, profile.DownloadRequest{

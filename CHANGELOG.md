@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### 新增用户可访问状态记录功能（扩展）
+
+新增批量标记用户为可访问的方法：
+
+| 文件 | 变更 |
+|------|------|
+| `internal/database/crud.go` | 新增 `SetUsersAccessible()` 和 `MarkListMembersAccessibleByIDs()` |
+| `internal/utils/user.go` | 新增通用 ID 提取函数 `ExtractIDs()` |
+
+**核心功能：**
+- `SetUsersAccessible()` - 批量标记用户为可访问状态
+- `MarkListMembersAccessibleByIDs()` - 异步标记列表成员为可访问
+- `ExtractIDs()` - 通用 ID 提取函数，使用泛型
+
+**调用位置：**
+- `internal/downloading/features.go`: `downloadList()`, `syncLstAndGetMembers()`
+- `main.go`: `handleProfileDownload()`
+
 #### 新增用户可访问状态记录功能
 
 在 `users` 表中新增 `is_accessible` 字段，用于记录 Twitter 用户是否可通过 API 正常访问（非封禁/注销状态）：

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
+	log "github.com/sirupsen/logrus"
 )
 
 const schema = `
@@ -190,6 +191,43 @@ func UpdateUser(db *sqlx.DB, usr *User) error {
 		return fmt.Errorf("failed to update user %d: %w", usr.Id, err)
 	}
 	return nil
+}
+
+// SetUsersAccessible 批量标记用户为可访问状态
+// 只更新已存在的用户，不创建新用户
+func SetUsersAccessible(db *sqlx.DB, uids []uint64) error {
+	if len(uids) == 0 {
+		return nil
+	}
+
+	// 使用 IN 子句批量更新
+	query := `UPDATE users SET is_accessible=1 WHERE id IN (?)`
+	query, args, err := sqlx.In(query, uids)
+	if err != nil {
+		return fmt.Errorf("failed to build batch update query: %w", err)
+	}
+
+	query = db.Rebind(query)
+	_, err = db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to batch update users accessible status: %w", err)
+	}
+	return nil
+}
+
+// MarkListMembersAccessibleByIDs 异步标记列表成员为可访问
+// 传入用户 ID 列表，用于批量更新数据库中用户状态
+func MarkListMembersAccessibleByIDs(db *sqlx.DB, uids []uint64) {
+	if len(uids) == 0 || db == nil {
+		return
+	}
+
+	go func() {
+		if err := SetUsersAccessible(db, uids); err != nil {
+			// 只记录 debug 日志，不中断主流程
+			log.Debugln("failed to mark list members as accessible:", err)
+		}
+	}()
 }
 
 func CreateUserEntity(db *sqlx.DB, entity *UserEntity) error {

@@ -940,6 +940,11 @@ func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list t
 		return nil, nil
 	}
 	log.Debugln("members:", len(members))
+
+	// 标记列表成员为可访问
+	uids := utils.ExtractIDs(members, func(u *twitter.User) uint64 { return u.Id })
+	database.MarkListMembersAccessibleByIDs(db, uids)
+
 	packgedUsers := make([]userInLstEntity, len(members))
 	for i, user := range members {
 		packgedUsers[i] = userInLstEntity{user: user, leid: &eid}
@@ -999,10 +1004,9 @@ func syncLstAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB
 		return nil, nil
 	}
 
-	memberIDs := make([]uint64, len(members))
-	for i, u := range members {
-		memberIDs[i] = u.Id
-	}
+	// 标记列表成员为可访问
+	memberIDs := utils.ExtractIDs(members, func(u *twitter.User) uint64 { return u.Id })
+	database.MarkListMembersAccessibleByIDs(db, memberIDs)
 	syncManager := NewListSyncManager(db)
 	if err := syncManager.SyncListMembers(ctx, eid, lst.Title(), memberIDs); err != nil {
 		log.Warnln("failed to sync list members for", lst.Title(), ":", err)
