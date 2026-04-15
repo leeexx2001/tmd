@@ -230,7 +230,7 @@ func filterTweetsByTimeRange(tweets []*Tweet, min *time.Time, max *time.Time) (c
 	return
 }
 
-func (u *User) GetMeidas(ctx context.Context, client *resty.Client, timeRange *utils.TimeRange) ([]*Tweet, error) {
+func (u *User) GetMedias(ctx context.Context, client *resty.Client, timeRange *utils.TimeRange) ([]*Tweet, error) {
 	if !u.IsVisiable() {
 		return nil, nil
 	}

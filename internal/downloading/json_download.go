@@ -283,20 +283,20 @@ func getIntFromMap(m map[string]any, key string) int {
 	return 0
 }
 
-type JsonPackgedTweet struct {
+type JsonPackagedTweet struct {
 	tweet *twitter.Tweet
 	dir   string
 }
 
-func (pt JsonPackgedTweet) GetTweet() *twitter.Tweet {
+func (pt JsonPackagedTweet) GetTweet() *twitter.Tweet {
 	return pt.tweet
 }
 
-func (pt JsonPackgedTweet) GetPath() string {
+func (pt JsonPackagedTweet) GetPath() string {
 	return pt.dir
 }
 
-func DownloadFromJsonFiles(ctx context.Context, client *resty.Client, dir string, jsonPaths []string) ([]JsonPackgedTweet, error) {
+func DownloadFromJsonFiles(ctx context.Context, client *resty.Client, dir string, jsonPaths []string) ([]JsonPackagedTweet, error) {
 	allTweets := make([]*twitter.Tweet, 0)
 
 	for _, path := range jsonPaths {
@@ -322,7 +322,7 @@ func DownloadFromJsonFiles(ctx context.Context, client *resty.Client, dir string
 		return nil, err
 	}
 
-	pts := make([]JsonPackgedTweet, 0, len(allTweets))
+	pts := make([]JsonPackagedTweet, 0, len(allTweets))
 	for _, tw := range allTweets {
 		userDir := tweetDir
 		if tw.Creator != nil {
@@ -330,7 +330,7 @@ func DownloadFromJsonFiles(ctx context.Context, client *resty.Client, dir string
 			userDir = filepath.Join(tweetDir, userNaming.SanitizedTitle())
 			os.MkdirAll(userDir, 0755)
 		}
-		pts = append(pts, JsonPackgedTweet{tweet: tw, dir: userDir})
+		pts = append(pts, JsonPackagedTweet{tweet: tw, dir: userDir})
 	}
 
 	return pts, nil
@@ -399,14 +399,14 @@ func readJsonEntries(path string) ([]JsonEntry, error) {
 	return nil, fmt.Errorf("unrecognized JSON format in file: %s", path)
 }
 
-func BatchDownloadFromJson(ctx context.Context, client *resty.Client, dir string, dwn downloader.Downloader, jsonPaths []string) []PackgedTweet {
+func BatchDownloadFromJson(ctx context.Context, client *resty.Client, dir string, dwn downloader.Downloader, jsonPaths []string) []PackagedTweet {
 	pts, err := DownloadFromJsonFiles(ctx, client, dir, jsonPaths)
 	if err != nil {
 		log.Errorln("failed to parse JSON files:", err)
 		return nil
 	}
 
-	packged := make([]PackgedTweet, 0, len(pts))
+	packged := make([]PackagedTweet, 0, len(pts))
 	for _, pt := range pts {
 		packged = append(packged, pt)
 	}
@@ -508,7 +508,7 @@ func downloadSingleJsonFile(ctx context.Context, client *resty.Client, baseDir s
 		return 0, err
 	}
 
-	packged := make([]PackgedTweet, 0, len(pts))
+	packged := make([]PackagedTweet, 0, len(pts))
 	for _, pt := range pts {
 		packged = append(packged, pt)
 	}

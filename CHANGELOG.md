@@ -7,6 +7,151 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.0] - 2026-04-15
+
+### Added
+
+#### 新增 `internal/config/` 包 - 配置管理模块
+
+将配置逻辑从 `main.go` 中抽离，独立管理：
+
+| 文件 | 功能 |
+|------|------|
+| `config.go` | 配置结构定义、读写、交互式引导 |
+
+**核心功能：**
+- `ReadConf()` / `WriteConf()` - YAML 配置文件读写
+- `PromptConfig()` - 交互式配置引导（支持默认值、自动备份）
+- `ReadAdditionalCookies()` - 多账号 Cookie 读取
+- 配置损坏时自动备份并重新创建
+
+#### 数据库层拆分 (`internal/database/`)
+
+将原来的单体 `crud.go`（496行）按职责拆分为多个文件：
+
+| 文件 | 功能 |
+|------|------|
+| `schema.go` | 数据库表结构与迁移 |
+| `helpers.go` | 通用数据库辅助函数（handleGetResult, handleInsertWithId） |
+| `user.go` | 用户表 CRUD 操作 + 用户可访问状态管理 |
+| `user_entity.go` | 用户实体操作（CRUD + 最新发布时间） |
+| `lst.go` / `lst_entity.go` | 列表及列表实体操作 |
+| `user_link.go` | 用户符号链接（symlink）管理 |
+| `user_sync.go` | 共享用户同步逻辑（`SyncUser()`） |
+| `user_sync_test.go` | 同步功能测试（5 个用例） |
+
+#### 下载模块拆分 (`internal/downloading/`)
+
+将原来的单体 `features.go`（1226行）按职责拆分为多个文件：
+
+| 文件 | 功能 |
+|------|------|
+| `types.go` | 类型定义（PackagedTweet, TweetInEntity, workerConfig 等）+ 全局状态 |
+| `tweet_download.go` | 单条推文下载、JSON/LoongTweet 保存、媒体清理 |
+| `user_sync.go` | 下载过程中的用户同步（syncUser, syncUserAndEntity, shouldIgnoreUser） |
+| `user_download.go` | 单用户推文获取与预处理 |
+| `batch_download.go` | 批量用户下载核心逻辑（优先级队列、并发控制、ants 池） |
+| `list_download.go` | 列表下载流程（syncList, syncListAndGetMembers） |
+| `batch_any.go` | 通用批量下载入口 |
+| `mark_downloaded.go` | 标记用户为已下载（支持时间戳、全量重置、JSON 结果输出） |
+| `retry.go` | 失败推文重试机制（RetryFailedTweets） |
+
+**批量下载架构：**
+```
+BatchDownloadAny()
+    ├── syncLstAndGetMembers() - 同步列表成员
+    ├── BatchUserDownload()
+    │   ├── 预处理阶段：用户排序、symlink 创建、深度计算
+    │   ├── 生产者池（ants goroutine pool）：并发获取用户推文
+    │   ├── 消费者池（MaxDownloadRoutine）：并发下载媒体
+    │   └── 错误收集与重试
+    └── MarkUsersAsDownloaded() - 标记已下载
+```
+
+#### 新增 `internal/twitter/batch_login.go` - 批量登录
+
+多账号并发登录：
+
+```go
+func BatchLogin(ctx context.Context, dbg bool, cookies []AccountCookie, master string) []*resty.Client
+```
+
+**特性：**
+- 并发登录所有账号
+- 自动去重（相同 screen_name 只保留一个）
+- 主账号优先保证
+- 支持调试模式（请求计数）
+
+#### Profile 模块 API 去重
+
+| 文件 | 变化 |
+|------|------|
+| `internal/profile/fetcher.go` | 精简 ~145 行，删除重复的 `userByScreenName` API 定义和 `makeProfileUrl()`，改用 `twitter.GetUserByScreenName()` + `userToProfileInfo()` 转换；新增 `errors.As` 类型解包修复客户端错误处理 |
+| `internal/profile/fetcher_test.go` | 新增测试用例（userToProfileInfo 转换 + GetHighResAvatarURL 各质量参数） |
+
+### Changed
+
+#### 架构重构 - 单体文件拆分与去重
+
+**删除的文件：**
+- `internal/database/crud.go` → 拆分为 8 个职责单一的文件
+- `internal/downloading/features.go` → 拆分为 9 个职责单一的文件
+
+**代码统计：**
+- 删除 ~1722 行（两个巨型单体文件）
+- 新增 ~18 个模块化文件
+- `main.go` 精简，配置/登录/重试逻辑分别迁移到 config/twitter/downloading 包
+
+#### 命名规范化
+
+全局修正 5 处拼写/命名不一致（编译器级安全替换）：
+
+| 旧名称 | 新名称 | 影响范围 |
+|--------|--------|----------|
+| `GetMeidas` | `GetMedias` | twitter/user.go, downloading/*, twitter_test.go |
+| `PackgedTweet` | `PackagedTweet` | downloading/*, main.go, json_download.go |
+| `JsonPackgedTweet` | `JsonPackagedTweet` | json_download.go |
+| `shouldIngoreUser` | `shouldIgnoreUser` | downloading/user_sync.go, batch_download.go |
+| `userInLstEntity` | `userInListEntity` | downloading/types.go, batch_download.go, list_download.go, batch_any.go |
+| `syncLstAndGetMembers` | `syncListAndGetMembers` | list_download.go, batch_any.go |
+
+#### 逻辑统一
+
+| 变化 | 说明 |
+|------|------|
+| `database.SyncUser()` | 提取共享用户同步逻辑，downloading 和 profile 包复用同一函数 |
+| `profile/downloader.syncUserDirectory()` | 简化为调用 `database.SyncUser()`，消除 ~35 行重复代码 |
+| `downloading/user_sync.syncUser()` | 简化为调用 `database.SyncUser()` 单行委托 |
+
+#### 错误处理改进
+
+| 文件 | 变化 |
+|------|------|
+| `profile/fetcher.go` | `handleClientError` 从类型断言改为 `errors.As`，修复因 `GetUserByScreenName` 包装 error 导致客户端限制错误无法被正确识别的问题 |
+| `downloading/batch_download.go` | TwitterApiError 类型断言同样改为 `errors.As`，防御性编程 |
+| `database/user_sync.go` | `SyncUser` 中 `RecordUserPreviousName` 错误现在向上传播而非仅记录日志，保持与原始行为一致 |
+| `downloading/types.go` | `TweetInEntity.GetPath()` 移除不必要的裸 `recover()`，改为直接返回空字符串 |
+| `downloading/user_download.go` | 修正 "skiped" → "skipped" 拼写 |
+
+#### 其他修改
+
+| 文件 | 变化 |
+|------|------|
+| `main.go` | 使用 config 包；使用 twitter.BatchLogin；使用 downloading.RetryFailedTweets |
+| `internal/twitter/user.go` | `GetMeidas` → `GetMedias` |
+| `internal/twitter/twitter_test.go` | 测试用例适配新方法名 |
+| `go.mod` / `go.sum` | 依赖更新（testify） |
+
+### Fixed
+
+- 修复 `profile/fetcher.go` 中 `handleClientError` 因 error 包装导致类型断言永远为 false 的 bug
+- 修复 `downloading/batch_download.go` 中同类型的 TwitterApiError 类型断言隐患
+- 修复 `database/SyncUser` 吞掉 `RecordUserPreviousName` 错误导致调用方丢失重命名历史失败信息的问题
+- 修复 `TweetInEntity.GetPath()` 中不必要的裸 `recover()` 调用
+- 修正 `shouldIngoreUser` / `PackgedTweet` / `GetMeidas` / `userInLstEntity` / `syncLstAndGetMembers` 共 6 处拼写/命名错误
+
+---
+
 ## [2.8.0] - 2026-04-12
 
 ### Added

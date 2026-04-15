@@ -245,41 +245,8 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 }
 
 func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, screenName string) (string, error) {
-	usrdb, err := database.GetUserById(pd.db, profile.ID)
-	if err != nil {
+	if err := database.SyncUser(pd.db, profile.ID, profile.Name, screenName, profile.Protected, 0, true); err != nil {
 		return "", err
-	}
-
-	isNew := usrdb == nil
-	renamed := false
-
-	if isNew {
-		usrdb = &database.User{}
-		usrdb.Id = profile.ID
-	} else {
-		renamed = usrdb.Name != profile.Name || usrdb.ScreenName != screenName
-	}
-
-	usrdb.FriendsCount = 0
-	usrdb.IsProtected = profile.Protected
-	usrdb.Name = profile.Name
-	usrdb.ScreenName = screenName
-	usrdb.IsAccessible = true
-
-	if isNew {
-		if err = database.CreateUser(pd.db, usrdb); err != nil {
-			return "", err
-		}
-	} else {
-		if err = database.UpdateUser(pd.db, usrdb); err != nil {
-			return "", err
-		}
-	}
-
-	if renamed || isNew {
-		if err = database.RecordUserPreviousName(pd.db, profile.ID, profile.Name, screenName); err != nil {
-			log.Debugln("failed to record previous name:", err)
-		}
 	}
 
 	entity, err := database.LocateUserEntity(pd.db, profile.ID, pd.storage.usersBasePath)

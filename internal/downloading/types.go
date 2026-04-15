@@ -1,0 +1,72 @@
+package downloading
+
+import (
+	"context"
+	"runtime"
+	"sync"
+
+	"github.com/unkmonster/tmd/internal/downloader"
+	"github.com/unkmonster/tmd/internal/entity"
+	"github.com/unkmonster/tmd/internal/twitter"
+)
+
+type PackagedTweet interface {
+	GetTweet() *twitter.Tweet
+	GetPath() string
+}
+
+type TweetInDir struct {
+	tweet *twitter.Tweet
+	path  string
+}
+
+func (pt TweetInDir) GetTweet() *twitter.Tweet {
+	return pt.tweet
+}
+
+func (pt TweetInDir) GetPath() string {
+	return pt.path
+}
+
+type TweetInEntity struct {
+	Tweet  *twitter.Tweet
+	Entity *entity.UserEntity
+}
+
+func (pt TweetInEntity) GetTweet() *twitter.Tweet {
+	return pt.Tweet
+}
+
+func (pt TweetInEntity) GetPath() string {
+	path, err := pt.Entity.Path()
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+type userInListEntity struct {
+	user *twitter.User
+	leid *int
+}
+
+var MaxDownloadRoutine int
+
+var syncedUsers sync.Map
+
+var syncedListUsers sync.Map
+
+func init() {
+	MaxDownloadRoutine = min(100, runtime.GOMAXPROCS(0)*10)
+}
+
+type workerConfig struct {
+	ctx            context.Context
+	wg             *sync.WaitGroup
+	cancel         context.CancelCauseFunc
+	skipLoongTweet bool
+	downloader     downloader.Downloader
+}
+
+const userTweetRateLimit = 1500
+const userTweetMaxConcurrent = 35

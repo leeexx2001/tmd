@@ -23,39 +23,68 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  main.go (应用层)                                            │
-│  - 命令行解析、配置加载、依赖注入                               │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│  internal/downloading (业务层 - 推文下载)                     │
-│  - features.go: 推文媒体下载、JSON保存                         │
-│  - json_download.go: JSON文件批量下载                         │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│  internal/profile (业务层 - 用户资料)                         │
-│  - downloader.go: Profile下载器                              │
-│  - fetcher.go: Twitter API获取                               │
-│  - storage.go: 文件存储管理                                   │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-┌──────────────────────────▼──────────────────────────────────┐
-│  internal/downloader (基础设施层 - 通用下载)                   │
-│  - downloader.go: HTTP下载、批量下载                          │
-│  - file_writer.go: 原子写入、MD5去重                          │
-│  - version_manager.go: 版本备份管理                           │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│  internal/naming (命名服务)                                   │
-│  - TweetNaming: 推文文件名生成                                 │
-│  - UserNaming: 用户目录命名                                    │
-└─────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│  internal/utils (工具层)                                      │
-│  - fs.go: 文件名清理、路径去重                                 │
-│  - recovery.go: Panic恢复                                    │
+│  - 命令行解析、依赖注入、流程编排                              │
+└──────────┬──────────────────────────────────────────────────┘
+           │
+┌──────────▼──────────────────────────────────────────────────┐
+│  internal/config (配置层)                                    │
+│  - config.go: 配置结构、读写、Cookie 管理                     │
+└──────────┬──────────────────────────────────────────────────┘
+           │
+┌──────────▼──────────────────┐  ┌─────────────────────────────▼┐
+│  internal/twitter          │  │  internal/database          │
+│  (API 客户端层)              │  │  (数据持久化层)               │
+│                            │  │                             │
+│  - api.go: REST API 封装    │  │  - schema.go: 建表与迁移      │
+│  - client.go: 客户端管理     │  │  - user.go: 用户 CRUD        │
+│  - user.go/tweet.go/        │  │  - lst.go: 列表 CRUD         │
+│    timeline.go/list.go:     │  │  - user_entity.go/lst_       │
+│    各端点接口                │  │    entity.go/user_link.go   │
+│  - batch_login.go: 多账号   │  │  - user_sync.go: 用户同步     │
+│    批量登录                  │  │  - helpers.go: 通用查询封装   │
+│  - errors.go: 错误类型       │  └─────────────┬───────────────┘
+└──────────┬──────────────────┘                │
+           │                                 │
+┌──────────▼──────────────────────────────────┴───────────────┐
+│  internal/downloading (业务层 - 推文下载)                    │
+│                                                            │
+│  - types.go: PackagedTweet 接口与全局状态                   │
+│  - tweet_download.go: 单推文下载与 JSON 保存                 │
+│  - user_download.go: 用户时间线下载                          │
+│  - user_sync.go: 用户信息同步                                │
+│  - list_download.go: 列表成员下载                            │
+│  - batch_download.go: 批量用户下载                           │
+│  - batch_any.go: 统一入口                                   │
+│  - json_download.go: JSON 文件批量下载                       │
+│  - mark_downloaded.go: 标记已下载                            │
+│  - retry.go: 失败重试                                       │
+└──────────┬──────────────────────────────────────────────────┘
+           │
+┌──────────▼──────────────────────────────────────────────────┐
+│  internal/profile (业务层 - 用户资料)                        │
+│  - fetcher.go: Twitter API 获取（复用 twitter 包）           │
+│  - downloader.go: Profile 下载调度                           │
+│  - storage.go: 文件存储与版本管理                            │
+│  - types.go: ProfileInfo 等类型定义                          │
+└──────────┬──────────────────────────────────────────────────┘
+           │
+┌──────────▼──────────────────────────────────────────────────┐
+│  internal/entity (数据实体层)                                │
+│  - interface.go: Entity 接口定义                             │
+│  - user.go / list.go / sync.go: 具体实体实现                 │
+├─────────────────────────────────────────────────────────────┤
+│  internal/downloader (基础设施层 - 通用下载)                 │
+│  - downloader.go: HTTP 下载、批量下载                        │
+│  - file_writer.go: 原子写入、MD5 去重                        │
+│  - version_manager.go: 版本备份管理                          │
+│  - types.go: 接口定义                                       │
+├─────────────────────────────────────────────────────────────┤
+│  internal/naming (命名服务)                                  │
+│  - naming.go: TweetNaming / UserNaming                      │
+├─────────────────────────────────────────────────────────────┤
+│  internal/utils (工具层)                                     │
+│  - fs.go / http.go / time_range.go / algo.go / recovery.go  │
+│  - user.go / stub.go / win32.go                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,10 +92,12 @@
 
 | 原则 | 实现 |
 |------|------|
+| **分层解耦** | 应用层 → 配置层 → API层/数据层 → 业务层 → 基础设施层 |
 | **依赖注入** | `downloader.Downloader` 接口注入到业务层 |
-| **单一职责** | 每个包职责明确，下载/命名/存储分离 |
-| **接口隔离** | 小接口设计（Downloader, FileWriter, VersionManager） |
-| **并发安全** | 使用 `sync.Mutex` 和 `context.Context` |
+| **单一职责** | 每个包职责明确，配置/下载/命名/存储/数据分离 |
+| **接口隔离** | 小接口设计（Entity, Downloader, FileWriter, VersionManager） |
+| **逻辑复用** | `database.SyncUser()` 统一用户同步，`twitter.GetUserByScreenName()` 复用 API 调用 |
+| **并发安全** | 使用 `sync.Mutex`、`sync.Map` 和 `context.Context` |
 
 ---
 
@@ -165,6 +196,19 @@ tmd -conf
 | `-user` | string | ✅ | 指定下载用户，支持用户ID或用户名（可带@前缀） |
 | `-list` | uint64 | ✅ | 指定下载列表ID |
 | `-foll` | string | ✅ | 指定用户，下载其关注的所有用户 |
+
+### JSON 下载参数
+
+| 参数 | 类型 | 可重复 | 说明 |
+|------|------|--------|------|
+| `-json` | string | ✅ | 从 JSON 文件下载媒体，支持其他工具导出的原始 API JSON 或 `.loongtweet` 格式 JSON |
+
+支持的 JSON 格式：
+- **原始 API JSON**：Twitter API 返回的原始推文数据（单个对象或数组）
+- **`.loongtweet` 格式**：本程序之前保存的格式化推文 JSON
+- 支持指定文件或目录（目录会递归扫描所有 `.json` 文件）
+
+> 💡 **推荐搭配**：使用 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter) 浏览器脚本导出推文 JSON，然后用 `-json` 参数下载媒体文件。该脚本支持导出任意用户的推文、书签、关注列表等为 JSON 格式，无需 API 密钥。
 
 ### 下载行为参数
 
@@ -403,7 +447,23 @@ tmd -user elonmusk -mark-downloaded -mark-time "null"
 tmd -user a -user b -user c -mark-downloaded
 ```
 
-### 场景9：调试与排错
+### 场景9：从 JSON 文件下载
+
+```bash
+# 从单个 JSON 文件下载媒体
+tmd -json tweets.json
+
+# 从多个 JSON 文件下载
+tmd -json tweets1.json -json tweets2.json
+
+# 从包含 JSON 文件的目录下载（递归扫描）
+tmd -json ./exported_tweets/
+
+# 混合使用：JSON + 用户下载
+tmd -json exported.json -user elonmusk
+```
+
+### 场景10：调试与排错
 
 ```bash
 # 调试模式
@@ -474,6 +534,8 @@ Twitter API 限制一段时间内过快的请求（例如某端点每15分钟仅
 | 组合 | 兼容 | 说明 |
 |------|:----:|------|
 | `-user` + `-list` + `-foll` | ✅ | 多种来源可叠加 |
+| `-user` + `-list` + `-foll` + `-json` | ✅ | JSON 文件与其他来源可叠加 |
+| `-json` + `-noprofile` | ✅ | 仅从 JSON 下载媒体，跳过 Profile |
 | `-user` + `--profile` | ✅ | 下载推文和资料 |
 | `-list` + `--profile` | ✅ | 下载列表成员推文和资料 |
 | `-foll` + `--profile` | ✅ | 下载关注用户推文和资料 |
@@ -592,6 +654,7 @@ ENTITY_ID:2|USER_ID:23248887|SCREEN_NAME:NASA|STATUS:OK
 | `-user` | 用户名/ID |
 | `-list` | 列表ID |
 | `-foll` | 用户名/ID |
+| `-json` | JSON 文件路径（支持文件或目录） |
 | `-profile-user` | 用户名/ID |
 | `-profile-list` | 列表ID |
 

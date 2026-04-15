@@ -1,0 +1,115 @@
+package database
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/jmoiron/sqlx"
+	log "github.com/sirupsen/logrus"
+)
+
+func CreateUser(db *sqlx.DB, usr *User) error {
+	stmt := `INSERT INTO Users(id, screen_name, name, protected, friends_count, is_accessible) VALUES(:id, :screen_name, :name, :protected, :friends_count, :is_accessible)`
+	_, err := db.NamedExec(stmt, usr)
+	if err != nil {
+		return fmt.Errorf("failed to create user %d (%s): %w", usr.Id, usr.ScreenName, err)
+	}
+	return nil
+}
+
+func DelUser(db *sqlx.DB, uid uint64) error {
+	stmt := `DELETE FROM users WHERE id=?`
+	_, err := db.Exec(stmt, uid)
+	if err != nil {
+		return fmt.Errorf("failed to delete user %d: %w", uid, err)
+	}
+	return nil
+}
+
+func GetUserById(db *sqlx.DB, uid uint64) (*User, error) {
+	stmt := `SELECT * FROM users WHERE id=?`
+	result := &User{}
+	err := db.Get(result, stmt, uid)
+	return handleGetResult(result, err)
+}
+
+func SetUserAccessible(db *sqlx.DB, uid uint64, accessible bool) error {
+	stmt := `UPDATE users SET is_accessible=? WHERE id=?`
+	result, err := db.Exec(stmt, accessible, uid)
+	if err != nil {
+		return fmt.Errorf("failed to set accessible status for user %d: %w", uid, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user %d: %w", uid, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user %d not found, cannot set accessible status", uid)
+	}
+	return nil
+}
+
+func SetUserAccessibleByScreenName(db *sqlx.DB, screenName string, accessible bool) error {
+	stmt := `UPDATE users SET is_accessible=? WHERE screen_name=?`
+	result, err := db.Exec(stmt, accessible, screenName)
+	if err != nil {
+		return fmt.Errorf("failed to set accessible status for user %s: %w", screenName, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user %s: %w", screenName, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("user %s not found, cannot set accessible status", screenName)
+	}
+	return nil
+}
+
+func UpdateUser(db *sqlx.DB, usr *User) error {
+	stmt := `UPDATE users SET screen_name=:screen_name, name=:name, protected=:protected, friends_count=:friends_count, is_accessible=:is_accessible WHERE id=:id`
+	_, err := db.NamedExec(stmt, usr)
+	if err != nil {
+		return fmt.Errorf("failed to update user %d: %w", usr.Id, err)
+	}
+	return nil
+}
+
+func SetUsersAccessible(db *sqlx.DB, uids []uint64) error {
+	if len(uids) == 0 {
+		return nil
+	}
+
+	query := `UPDATE users SET is_accessible=1 WHERE id IN (?)`
+	query, args, err := sqlx.In(query, uids)
+	if err != nil {
+		return fmt.Errorf("failed to build batch update query: %w", err)
+	}
+
+	query = db.Rebind(query)
+	_, err = db.Exec(query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to batch update users accessible status: %w", err)
+	}
+	return nil
+}
+
+func MarkListMembersAccessibleByIDs(db *sqlx.DB, uids []uint64) {
+	if len(uids) == 0 || db == nil {
+		return
+	}
+
+	go func() {
+		if err := SetUsersAccessible(db, uids); err != nil {
+			log.Debugln("failed to mark list members as accessible:", err)
+		}
+	}()
+}
+
+func RecordUserPreviousName(db *sqlx.DB, uid uint64, name string, screenName string) error {
+	stmt := `INSERT INTO user_previous_names(uid, screen_name, name, record_date) VALUES(?, ?, ?, ?)`
+	_, err := db.Exec(stmt, uid, screenName, name, time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to record previous name for user %d (%s -> %s): %w", uid, screenName, name, err)
+	}
+	return nil
+}
