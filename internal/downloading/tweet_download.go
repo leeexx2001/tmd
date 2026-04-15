@@ -223,13 +223,19 @@ func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, t
 	}
 
 	reqs := make([]downloader.DownloadRequest, 0, len(tweet.Urls))
-	for _, u := range tweet.Urls {
+	for i, u := range tweet.Urls {
 		ext, err := utils.GetExtFromUrl(u)
 		if err != nil {
 			return err
 		}
 
-		path, err := tweetNaming.FilePath(dir, ext)
+		// 为同一推文的多个媒体文件生成唯一文件名
+		var path string
+		if len(tweet.Urls) > 1 {
+			path, err = tweetNaming.FilePath(dir, fmt.Sprintf("_%d%s", i+1, ext))
+		} else {
+			path, err = tweetNaming.FilePath(dir, ext)
+		}
 		if err != nil {
 			return err
 		}

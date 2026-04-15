@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.9.2] - 2026-04-15
+
+### Fixed
+
+#### 修复多媒体文件命名冲突
+
+修复同一推文包含多个媒体文件时的文件名冲突问题：
+
+| 文件 | 变更 |
+|------|------|
+| `internal/downloading/tweet_download.go` | `downloadTweetMedia()` 函数 |
+
+**问题：** 同一推文的多个媒体文件使用相同的文件名，导致后下载的文件覆盖先下载的文件。
+
+**修复：** 为同一推文的多个媒体文件添加序号后缀：
+- 单媒体文件：`{tweet_id}.{ext}`
+- 多媒体文件：`{tweet_id}_1.{ext}`, `{tweet_id}_2.{ext}`, ...
+
+---
+
 ## [2.9.0] - 2026-04-15
 
 ### Added
