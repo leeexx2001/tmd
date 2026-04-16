@@ -69,7 +69,11 @@ func getUser(ctx context.Context, client *resty.Client, url string) (*User, uint
 	if err := CheckApiResp(resp.Body()); err != nil {
 		return nil, 0, err
 	}
-	return parseRespJson(resp.Body())
+	user := gjson.GetBytes(resp.Body(), "data.user")
+	if !user.Exists() {
+		return nil, 0, fmt.Errorf("user does not exist or is not accessible")
+	}
+	return parseUserResults(&user)
 }
 
 func parseUserResults(user_results *gjson.Result) (*User, uint64, error) {
@@ -151,14 +155,6 @@ func parseUserResults(user_results *gjson.Result) (*User, uint64, error) {
 	}
 
 	return &usr, usr.Id, nil
-}
-
-func parseRespJson(resp []byte) (*User, uint64, error) {
-	user := gjson.GetBytes(resp, "data.user")
-	if !user.Exists() {
-		return nil, 0, fmt.Errorf("user does not exist or is not accessible")
-	}
-	return parseUserResults(&user)
 }
 
 func (u *User) IsVisiable() bool {

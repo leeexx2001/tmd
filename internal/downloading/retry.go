@@ -9,7 +9,7 @@ import (
 	"github.com/unkmonster/tmd/internal/downloader"
 )
 
-func RetryFailedTweets(ctx context.Context, dumper *TweetDumper, db *sqlx.DB, client *resty.Client, dwn downloader.Downloader) error {
+func RetryFailedTweets(ctx context.Context, dumper *TweetDumper, db *sqlx.DB, client *resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter) error {
 	if dumper.Count() == 0 {
 		return nil
 	}
@@ -25,7 +25,7 @@ func RetryFailedTweets(ctx context.Context, dumper *TweetDumper, db *sqlx.DB, cl
 		toretry = append(toretry, leg)
 	}
 
-	newFails := BatchDownloadTweet(ctx, client, true, dwn, toretry...)
+	newFails := BatchDownloadTweet(ctx, client, true, dwn, fileWriter, toretry...)
 	dumper.Clear()
 	for _, pt := range newFails {
 		te := pt.(*TweetInEntity)

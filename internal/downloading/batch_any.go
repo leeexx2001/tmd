@@ -11,7 +11,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, lists []twitter.ListBase, users []*twitter.User, dir string, realDir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader) ([]*TweetInEntity, error) {
+func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, lists []twitter.ListBase, users []*twitter.User, dir string, realDir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter) ([]*TweetInEntity, error) {
 	log.Debugln("start collecting users")
 	packgedUsers := make([]userInListEntity, 0)
 	wg := sync.WaitGroup{}
@@ -44,5 +44,5 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 
 	log.Debugln("collected users:", len(packgedUsers))
 	effectiveAutoFollow := autoFollow || len(lists) > 0
-	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, effectiveAutoFollow, additional, dwn)
+	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, effectiveAutoFollow, additional, dwn, fileWriter)
 }

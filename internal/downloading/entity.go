@@ -20,6 +20,11 @@ func updateUserLink(lnk *database.UserLink, db *sqlx.DB, path string) error {
 		return err
 	}
 
+	linkDir := filepath.Dir(linkpath)
+	if err := os.MkdirAll(linkDir, 0755); err != nil {
+		return err
+	}
+
 	if lnk.Name == name {
 		err = os.Symlink(path, linkpath)
 		if os.IsExist(err) {
@@ -28,7 +33,7 @@ func updateUserLink(lnk *database.UserLink, db *sqlx.DB, path string) error {
 		return err
 	}
 
-	newlinkpath := filepath.Join(filepath.Dir(linkpath), name)
+	newlinkpath := filepath.Join(linkDir, name)
 
 	if err = os.RemoveAll(linkpath); err != nil {
 		return err

@@ -89,9 +89,12 @@ func SetUserEntityLatestReleaseTime(db *sqlx.DB, id int, t time.Time) error {
 	stmt := `UPDATE user_entities SET latest_release_time=? WHERE id=?`
 	result, err := db.Exec(stmt, t, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to set latest release time for user entity %d: %w", id, err)
 	}
-	rows, _ := result.RowsAffected()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user entity %d: %w", id, err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("no user entity found with id %d", id)
 	}
@@ -102,9 +105,12 @@ func ClearUserEntityLatestReleaseTime(db *sqlx.DB, id int) error {
 	stmt := `UPDATE user_entities SET latest_release_time=NULL WHERE id=?`
 	result, err := db.Exec(stmt, id)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to clear latest release time for user entity %d: %w", id, err)
 	}
-	rows, _ := result.RowsAffected()
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected for user entity %d: %w", id, err)
+	}
 	if rows == 0 {
 		return fmt.Errorf("no user entity found with id %d", id)
 	}

@@ -9,12 +9,13 @@ import (
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/entity"
+	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
-func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, additional []*resty.Client, dwn downloader.Downloader) ([]*TweetInEntity, error) {
-	expectedTitle := utils.WinFileName(list.Title())
+func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, additional []*resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter) ([]*TweetInEntity, error) {
+	expectedTitle := naming.NewListNamingFromBase(list).SanitizedTitle()
 	ent, err := entity.NewListEntity(db, list.GetId(), dir)
 	if err != nil {
 		return nil, err
@@ -46,7 +47,7 @@ func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list t
 	for i, user := range members {
 		packgedUsers[i] = userInListEntity{user: user, leid: &eid}
 	}
-	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, true, additional, dwn)
+	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, true, additional, dwn, fileWriter)
 }
 
 func syncList(db *sqlx.DB, list *twitter.List) error {
@@ -60,14 +61,14 @@ func syncList(db *sqlx.DB, list *twitter.List) error {
 	return database.UpdateLst(db, &database.Lst{Id: list.Id, Name: list.Name, OwnerId: list.Creator.Id})
 }
 
-func DownloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, additional []*resty.Client, dwn downloader.Downloader) ([]*TweetInEntity, error) {
+func DownloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, additional []*resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter) ([]*TweetInEntity, error) {
 	tlist, ok := list.(*twitter.List)
 	if ok {
 		if err := syncList(db, tlist); err != nil {
 			return nil, err
 		}
 	}
-	return downloadList(ctx, client, db, list, dir, realDir, additional, dwn)
+	return downloadList(ctx, client, db, list, dir, realDir, additional, dwn, fileWriter)
 }
 
 func syncListAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB, lst twitter.ListBase, dir string) ([]userInListEntity, error) {
@@ -77,7 +78,7 @@ func syncListAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.D
 		}
 	}
 
-	expectedTitle := utils.WinFileName(lst.Title())
+	expectedTitle := naming.NewListNamingFromBase(lst).SanitizedTitle()
 	ent, err := entity.NewListEntity(db, lst.GetId(), dir)
 	if err != nil {
 		return nil, err

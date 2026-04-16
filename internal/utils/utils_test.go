@@ -143,9 +143,9 @@ func TestSafeDirName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := WinFileName(tt.input)
+			got := WinFileNameWithMaxLen(tt.input, DefaultMaxFileNameLen)
 			if got != tt.expected {
-				t.Errorf("WinFileName(%q) = %q; want %q", tt.input, got, tt.expected)
+				t.Errorf("WinFileNameWithMaxLen(%q, %d) = %q; want %q", tt.input, DefaultMaxFileNameLen, got, tt.expected)
 			}
 		})
 	}

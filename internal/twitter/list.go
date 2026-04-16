@@ -67,34 +67,26 @@ func parseList(list *gjson.Result) (*List, error) {
 	return &result, nil
 }
 
-func parseItemContentToUser(ic gjson.Result) (*User, error) {
-	user_results, err := getResults(ic, timelineUser)
-	if err != nil {
-		return nil, err
-	}
-	if user_results.String() == "{}" {
-		return nil, fmt.Errorf("empty user results")
-	}
-
-	u, _, err := parseUserResults(&user_results)
-	if err != nil {
-		return nil, err
-	}
-	return u, nil
-}
-
 func itemContentsToUsers(itemContents []gjson.Result) MembersResult {
 	result := MembersResult{
 		Users: make([]*User, 0, len(itemContents)),
 	}
 	for _, ic := range itemContents {
-		user, err := parseItemContentToUser(ic)
+		user_results, err := getResults(ic, timelineUser)
 		if err != nil {
-			log.Debugln("parseItemContentToUser failed:", err)
+			log.Debugln("getResults(timelineUser) failed:", err)
 			continue
 		}
-		if user != nil {
-			result.Users = append(result.Users, user)
+		if user_results.String() == "{}" {
+			continue
+		}
+		u, _, err := parseUserResults(&user_results)
+		if err != nil {
+			log.Debugln("parseUserResults failed:", err)
+			continue
+		}
+		if u != nil {
+			result.Users = append(result.Users, u)
 		}
 	}
 	return result

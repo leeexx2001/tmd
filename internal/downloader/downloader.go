@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	log "github.com/sirupsen/logrus"
@@ -43,6 +44,16 @@ func (d *DefaultDownloader) Download(req DownloadRequest) (*DownloadResult, erro
 		return result, err
 	}
 
+	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+		err := fmt.Errorf("HTTP %d: %s", resp.StatusCode(), req.URL)
+		result.Error = err
+		d.logger.WithFields(log.Fields{
+			"url":         req.URL,
+			"status_code": resp.StatusCode(),
+		}).Warn("download failed with non-2xx status")
+		return result, err
+	}
+
 	// 写入文件
 	writeReq := WriteRequest{
 		Path: req.Destination,
@@ -56,6 +67,7 @@ func (d *DefaultDownloader) Download(req DownloadRequest) (*DownloadResult, erro
 	writeResult, err := d.fileWriter.Write(writeReq)
 	if err != nil {
 		result.Error = err
+		result.Success = false
 		return result, err
 	}
 

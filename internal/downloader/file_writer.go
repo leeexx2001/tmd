@@ -7,12 +7,19 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // DefaultFileWriter 默认文件写入器实现
 type DefaultFileWriter struct {
 	versionManager VersionManager
-	mu             sync.Mutex // 保护并发写入
+	locks          sync.Map // map[string]*sync.Mutex — 按文件路径的细粒度锁
+}
+
+func (fw *DefaultFileWriter) getLock(path string) *sync.Mutex {
+	actual, _ := fw.locks.LoadOrStore(path, &sync.Mutex{})
+	return actual.(*sync.Mutex)
 }
 
 // NewFileWriter 创建文件写入器
@@ -26,8 +33,9 @@ func NewFileWriter(versionManager VersionManager) *DefaultFileWriter {
 func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
 	result := WriteResult{NewSize: int64(len(req.Data))}
 
-	fw.mu.Lock()
-	defer fw.mu.Unlock()
+	lock := fw.getLock(req.Path)
+	lock.Lock()
+	defer lock.Unlock()
 
 	// 1. 检查是否需要跳过
 	if req.Options.SkipUnchanged {
@@ -38,7 +46,11 @@ func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
 		if exists {
 			result.OldSize = fileInfo.Size()
 			if fileInfo.Size() == result.NewSize {
-				oldHash, _ := fw.computeFileHash(req.Path)
+				oldHash, hashErr := fw.computeFileHash(req.Path)
+				if hashErr != nil {
+					log.Warnf("failed to compute file hash for SkipUnchanged check: %v, path: %s", hashErr, req.Path)
+					return result, hashErr
+				}
 				newHash := fw.computeDataHash(req.Data)
 				if oldHash == newHash {
 					result.Skipped = true
@@ -66,7 +78,9 @@ func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
 
 	// 4. 设置修改时间
 	if req.Options.ModTime != nil {
-		_ = os.Chtimes(req.Path, time.Time{}, *req.Options.ModTime)
+		if err := os.Chtimes(req.Path, time.Time{}, *req.Options.ModTime); err != nil {
+			log.Warnf("failed to set modification time for %s: %v", req.Path, err)
+		}
 	}
 
 	result.Success = true
@@ -103,6 +117,9 @@ func (fw *DefaultFileWriter) computeDataHash(data []byte) string {
 // atomicWrite 原子写入
 func (fw *DefaultFileWriter) atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
 	tempFile, err := os.CreateTemp(dir, ".tmp_*")
 	if err != nil {
 		return err

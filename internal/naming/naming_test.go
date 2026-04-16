@@ -82,12 +82,25 @@ func TestTweetNaming_FileName(t *testing.T) {
 func TestUserNaming(t *testing.T) {
 	un := NewUserNaming("吕布", "QqiRru")
 
-	if un.Title() != "吕布(QqiRru)" {
-		t.Errorf("Title() = %q, want %q", un.Title(), "吕布(QqiRru)")
-	}
-
 	expected := "吕布(QqiRru)"
 	if un.SanitizedTitle() != expected {
 		t.Errorf("SanitizedTitle() = %q, want %q", un.SanitizedTitle(), expected)
 	}
 }
+
+func TestListNaming(t *testing.T) {
+	ln := NewListNamingFromBase(&mockListBase{id: 9876543210, title: "Test List(9876543210)"})
+
+	expected := "Test List(9876543210)"
+	if ln.SanitizedTitle() != expected {
+		t.Errorf("SanitizedTitle() = %q, want %q", ln.SanitizedTitle(), expected)
+	}
+}
+
+type mockListBase struct {
+	id    int64
+	title string
+}
+
+func (m *mockListBase) GetId() int64  { return m.id }
+func (m *mockListBase) Title() string { return m.title }

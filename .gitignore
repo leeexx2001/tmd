@@ -1,6 +1,71 @@
-.vscode
+# === IDE / Editor ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# === Trae ===
 .trae/
+
+# === Go Build Artifacts ===
 *.exe
-bin
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+
+# === Go Profiling & Coverage ===
 *.prof
+*.pprof
+coverage.txt
+coverage.out
+profile.out
+
+# === Go Vendor (optional) ===
+# vendor/
+
+# === Database ===
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# === Logs ===
+*.log
+logs/
+
+# === Environment & Config ===
+.env
+.env.*
+!.env.example
+
+# === Temp / Downloaded Data ===
+tmp/
+temp/
+downloads/
+
+# === OS Generated Files ===
+.DS_Store
+Desktop.ini
+*.bak
+*.tmp
+
+# === Project Specific ===
+# 旧版本备份
+tmd-2.4.4/
+tmd-*/
+
+# 示例数据
+json示例/
+*.example.json
+
+# === Misc ===
 todo.md

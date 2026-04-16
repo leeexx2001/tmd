@@ -54,12 +54,12 @@ func UpdateUserLink(db *sqlx.DB, id int32, name string) error {
 	return nil
 }
 
-func GetUserLinksByLstEntityId(db interface {
+func GetUserLinksByLstEntityId(queryer interface {
 	Select(dest interface{}, query string, args ...interface{}) error
 }, lstEntityId int) ([]*UserLink, error) {
 	stmt := `SELECT * FROM user_links WHERE parent_lst_entity_id = ?`
 	res := []*UserLink{}
-	err := db.Select(&res, stmt, lstEntityId)
+	err := queryer.Select(&res, stmt, lstEntityId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user links for list entity %d: %w", lstEntityId, err)
 	}

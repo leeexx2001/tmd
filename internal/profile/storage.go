@@ -6,22 +6,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/unkmonster/tmd/internal/utils"
+	"github.com/unkmonster/tmd/internal/downloader"
 )
 
 type FileStorageManager struct {
-	usersBasePath string
-}
-
-func getFileExtension(fileType FileType) string {
-	switch fileType {
-	case FileTypeDescription:
-		return ".txt"
-	case FileTypeProfile:
-		return ".json"
-	default:
-		return ".jpg"
-	}
+	usersBasePath  string
+	versionManager downloader.VersionManager
 }
 
 func NewFileStorageManager(usersBasePath string) (*FileStorageManager, error) {
@@ -36,24 +26,18 @@ func NewFileStorageManager(usersBasePath string) (*FileStorageManager, error) {
 	return &FileStorageManager{usersBasePath: usersBasePath}, nil
 }
 
+func (fsm *FileStorageManager) SetVersionManager(vm downloader.VersionManager) {
+	fsm.versionManager = vm
+}
+
 func (fsm *FileStorageManager) getUserProfilePath(userTitle string) string {
 	// userTitle 已经在外部清理过，直接使用
 	return filepath.Join(fsm.usersBasePath, userTitle, profileDirName, profileSubDirName)
 }
 
 func (fsm *FileStorageManager) EnsureDirectory(userTitle string) (string, error) {
-	profilePath := fsm.getUserProfilePath(userTitle)
-
-	if err := os.MkdirAll(profilePath, 0755); err != nil {
-		return "", fmt.Errorf("failed to create user profile directory: %w", err)
-	}
-
-	versionsDir := filepath.Join(profilePath, versionsDirName)
-	if err := os.MkdirAll(versionsDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create versions directory: %w", err)
-	}
-
-	return profilePath, nil
+	userDir := filepath.Join(fsm.usersBasePath, userTitle)
+	return ensureProfileDirs(userDir)
 }
 
 func (fsm *FileStorageManager) GetFilePath(userTitle string, fileType FileType) string {
@@ -88,11 +72,6 @@ func (fsm *FileStorageManager) GetFilePathWithExt(userTitle string, fileType Fil
 	}
 }
 
-func (fsm *FileStorageManager) GetVersionPath(userTitle string, fileType FileType, timestamp time.Time) string {
-	ext := getFileExtension(fileType)
-	return fsm.GetVersionPathWithExt(userTitle, fileType, timestamp, ext)
-}
-
 func (fsm *FileStorageManager) GetVersionPathWithExt(userTitle string, fileType FileType, timestamp time.Time, ext string) string {
 	profilePath := fsm.getUserProfilePath(userTitle)
 	versionsDir := filepath.Join(profilePath, versionsDirName)
@@ -112,32 +91,3 @@ func (fsm *FileStorageManager) GetVersionPathWithExt(userTitle string, fileType 
 		return filepath.Join(versionsDir, fmt.Sprintf("%s_%s%s", fileType, timestampStr, ext))
 	}
 }
-
-func (fsm *FileStorageManager) FileExists(path string) (bool, FileInfo, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, FileInfo{}, nil
-		}
-		return false, FileInfo{}, err
-	}
-
-	return true, FileInfo{
-		Path:    path,
-		Size:    info.Size(),
-		ModTime: info.ModTime(),
-	}, nil
-}
-
-func (fsm *FileStorageManager) CreateVersion(userTitle string, fileType FileType, sourcePath string) (string, error) {
-	ext := filepath.Ext(sourcePath)
-	versionPath := fsm.GetVersionPathWithExt(userTitle, fileType, time.Now(), ext)
-
-	if err := utils.CopyFile(sourcePath, versionPath); err != nil {
-		return "", fmt.Errorf("failed to create version backup: %w", err)
-	}
-
-	return versionPath, nil
-}
-
-

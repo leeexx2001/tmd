@@ -376,6 +376,11 @@ func readJsonEntries(path string) ([]JsonEntry, error) {
 
 	var rawEntries []RawTweetEntry
 	if err := json.Unmarshal(data, &rawEntries); err == nil && len(rawEntries) > 0 {
+		for i := range rawEntries {
+			if entryJSON, err := json.Marshal(rawEntries[i]); err == nil {
+				rawEntries[i].OriginalJSON = entryJSON
+			}
+		}
 		rtf := &RawTweetFile{Entries: rawEntries, Raw: data}
 		entries = append(entries, rtf)
 		return entries, nil
@@ -383,6 +388,7 @@ func readJsonEntries(path string) ([]JsonEntry, error) {
 
 	var singleRaw RawTweetEntry
 	if err := json.Unmarshal(data, &singleRaw); err == nil && singleRaw.Id != "" {
+		singleRaw.OriginalJSON = data
 		rtf := &RawTweetFile{Entries: []RawTweetEntry{singleRaw}, Raw: data}
 		entries = append(entries, rtf)
 		return entries, nil
@@ -399,7 +405,7 @@ func readJsonEntries(path string) ([]JsonEntry, error) {
 	return nil, fmt.Errorf("unrecognized JSON format in file: %s", path)
 }
 
-func BatchDownloadFromJson(ctx context.Context, client *resty.Client, dir string, dwn downloader.Downloader, jsonPaths []string) []PackagedTweet {
+func BatchDownloadFromJson(ctx context.Context, client *resty.Client, dir string, dwn downloader.Downloader, fileWriter downloader.FileWriter, jsonPaths []string) []PackagedTweet {
 	pts, err := DownloadFromJsonFiles(ctx, client, dir, jsonPaths)
 	if err != nil {
 		log.Errorln("failed to parse JSON files:", err)
@@ -411,7 +417,7 @@ func BatchDownloadFromJson(ctx context.Context, client *resty.Client, dir string
 		packged = append(packged, pt)
 	}
 
-	errors := BatchDownloadTweet(ctx, client, false, dwn, packged...)
+	errors := BatchDownloadTweet(ctx, client, false, dwn, fileWriter, packged...)
 	if len(errors) > 0 {
 		log.Warnf("%d tweets failed to download", len(errors))
 	}
@@ -427,7 +433,7 @@ type JsonDownloadResult struct {
 	Duration   time.Duration `json:"duration"`
 }
 
-func DownloadJsonDir(ctx context.Context, client *resty.Client, baseDir string, dwn downloader.Downloader, jsonPaths ...string) []JsonDownloadResult {
+func DownloadJsonDir(ctx context.Context, client *resty.Client, baseDir string, dwn downloader.Downloader, fileWriter downloader.FileWriter, jsonPaths ...string) []JsonDownloadResult {
 	results := make([]JsonDownloadResult, 0)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -448,7 +454,7 @@ func DownloadJsonDir(ctx context.Context, client *resty.Client, baseDir string, 
 			for _, entry := range entries {
 				fullPath := filepath.Join(jsonPath, entry.Name())
 				if entry.IsDir() {
-					subResults := DownloadJsonDir(ctx, client, baseDir, dwn, fullPath)
+					subResults := DownloadJsonDir(ctx, client, baseDir, dwn, fileWriter, fullPath)
 					mu.Lock()
 					results = append(results, subResults...)
 					mu.Unlock()
@@ -462,7 +468,7 @@ func DownloadJsonDir(ctx context.Context, client *resty.Client, baseDir string, 
 					defer wg.Done()
 					start := time.Now()
 					result := JsonDownloadResult{Path: path}
-					tweetCount, err := downloadSingleJsonFile(ctx, client, baseDir, path, dwn)
+					tweetCount, err := downloadSingleJsonFile(ctx, client, baseDir, path, dwn, fileWriter)
 					result.TweetCount = tweetCount
 					if err != nil {
 						result.Success = false
@@ -482,7 +488,7 @@ func DownloadJsonDir(ctx context.Context, client *resty.Client, baseDir string, 
 				defer wg.Done()
 				start := time.Now()
 				result := JsonDownloadResult{Path: path}
-				tweetCount, err := downloadSingleJsonFile(ctx, client, baseDir, path, dwn)
+				tweetCount, err := downloadSingleJsonFile(ctx, client, baseDir, path, dwn, fileWriter)
 				result.TweetCount = tweetCount
 				if err != nil {
 					result.Success = false
@@ -502,7 +508,7 @@ func DownloadJsonDir(ctx context.Context, client *resty.Client, baseDir string, 
 	return results
 }
 
-func downloadSingleJsonFile(ctx context.Context, client *resty.Client, baseDir string, jsonPath string, dwn downloader.Downloader) (int, error) {
+func downloadSingleJsonFile(ctx context.Context, client *resty.Client, baseDir string, jsonPath string, dwn downloader.Downloader, fileWriter downloader.FileWriter) (int, error) {
 	pts, err := DownloadFromJsonFiles(ctx, client, baseDir, []string{jsonPath})
 	if err != nil {
 		return 0, err
@@ -514,7 +520,7 @@ func downloadSingleJsonFile(ctx context.Context, client *resty.Client, baseDir s
 	}
 
 	tweetCount := len(packged)
-	errors := BatchDownloadTweet(ctx, client, false, dwn, packged...)
+	errors := BatchDownloadTweet(ctx, client, false, dwn, fileWriter, packged...)
 	if len(errors) > 0 {
 		return tweetCount, fmt.Errorf("%d tweets failed to download", len(errors))
 	}

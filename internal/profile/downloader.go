@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,6 +16,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/downloader"
+	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
@@ -40,24 +40,6 @@ func ensureProfileDirs(userDir string) (string, error) {
 	return profileDir, nil
 }
 
-func extractExtFromURL(url string) string {
-	ext := path.Ext(url)
-	ext = strings.ToLower(ext)
-
-	validExts := map[string]bool{
-		".jpg":  true,
-		".jpeg": true,
-		".png":  true,
-		".gif":  true,
-		".webp": true,
-	}
-
-	if validExts[ext] {
-		return ext
-	}
-	return ".jpg"
-}
-
 type ProfileDownloader struct {
 	config     *Config
 	storage    *FileStorageManager
@@ -70,6 +52,15 @@ type ProfileDownloader struct {
 func NewProfileDownloader(config *Config, storage *FileStorageManager, fetcher Fetcher, dwn downloader.Downloader, fw downloader.FileWriter) *ProfileDownloader {
 	if config == nil {
 		config = DefaultConfig()
+	}
+	if storage == nil {
+		panic("profile: storage cannot be nil")
+	}
+	if dwn == nil {
+		panic("profile: downloader cannot be nil")
+	}
+	if fw == nil {
+		panic("profile: fileWriter cannot be nil")
 	}
 
 	return &ProfileDownloader{
@@ -84,6 +75,15 @@ func NewProfileDownloader(config *Config, storage *FileStorageManager, fetcher F
 func NewProfileDownloaderWithClients(config *Config, storage *FileStorageManager, clients []*resty.Client, dwn downloader.Downloader, fw downloader.FileWriter) *ProfileDownloader {
 	if config == nil {
 		config = DefaultConfig()
+	}
+	if storage == nil {
+		panic("profile: storage cannot be nil")
+	}
+	if dwn == nil {
+		panic("profile: downloader cannot be nil")
+	}
+	if fw == nil {
+		panic("profile: fileWriter cannot be nil")
 	}
 
 	fetcher := NewTwitterFetcherWithClients(clients)
@@ -101,6 +101,15 @@ func NewProfileDownloaderWithDB(config *Config, storage *FileStorageManager, cli
 	if config == nil {
 		config = DefaultConfig()
 	}
+	if storage == nil {
+		panic("profile: storage cannot be nil")
+	}
+	if dwn == nil {
+		panic("profile: downloader cannot be nil")
+	}
+	if fw == nil {
+		panic("profile: fileWriter cannot be nil")
+	}
 
 	fetcher := NewTwitterFetcherWithClients(clients)
 
@@ -112,10 +121,6 @@ func NewProfileDownloaderWithDB(config *Config, storage *FileStorageManager, cli
 		downloader: dwn,
 		fileWriter: fw,
 	}
-}
-
-func (pd *ProfileDownloader) Fetcher() Fetcher {
-	return pd.fetcher
 }
 
 type DownloadRequest struct {
@@ -192,7 +197,7 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 	if userTitle == "" {
 		userTitle = fmt.Sprintf("%s(%s)", profile.Name, req.ScreenName)
 	}
-	userTitle = utils.WinFileName(userTitle)
+	userTitle = utils.WinFileNameWithMaxLen(userTitle, naming.MaxFileNameLen)
 
 	var userDir string
 
@@ -221,11 +226,11 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 	}
 
 	if profile.BannerURL != "" {
-		bannerResult := pd.downloadBanner(ctx, userTitle, req.ScreenName, profile.BannerURL, fetchedAt)
+		bannerResult := pd.downloadFile(ctx, userTitle, req.ScreenName, FileTypeBanner, profile.BannerURL, ".jpg", fetchedAt, "banner")
 		result.Files = append(result.Files, bannerResult)
 	}
 
-	descResult := pd.saveDescription(userTitle, req.ScreenName, profile.Description, fetchedAt)
+	descResult := pd.saveContent(userTitle, FileTypeDescription, []byte(profile.Description), fetchedAt)
 	result.Files = append(result.Files, descResult)
 
 	profileResult := pd.saveProfileJSON(userTitle, req.ScreenName, profile, fetchedAt)
@@ -407,51 +412,14 @@ func (pd *ProfileDownloader) profileDownloader(
 }
 
 func (pd *ProfileDownloader) downloadAvatar(ctx context.Context, userTitle, screenName, url string, fetchedAt time.Time) FileResult {
-	ext := extractExtFromURL(url)
-	filePath := pd.storage.GetFilePathWithExt(userTitle, FileTypeAvatar, ext)
-
-	client := pd.fetcher.Client()
-
-	downloadReq := downloader.DownloadRequest{
-		Context:     ctx,
-		Client:      client,
-		URL:         GetHighResAvatarURL(url, pd.config.AvatarQuality),
-		Destination: filePath,
-		Options: downloader.DownloadOptions{
-			SkipUnchanged: pd.config.SkipUnchanged,
-			CreateVersion: pd.config.EnableVersioning,
-			SetModTime:    &fetchedAt,
-		},
-	}
-
-	result, err := pd.downloader.Download(downloadReq)
-	if err != nil {
-		fileResult := FileResult{
-			FileType: FileTypeAvatar,
-			Status:   StatusFailed,
-			Error:    err,
-		}
-		log.Errorln("avatar download failed:", screenName, "-", err)
-		return fileResult
-	}
-
-	status := StatusDownloaded
-	if result.Skipped {
-		status = StatusSkipped
-	}
-
-	return FileResult{
-		FileType: FileTypeAvatar,
-		Status:   status,
-		FilePath: result.FilePath,
-		OldSize:  result.OldSize,
-		NewSize:  result.FileSize,
-	}
+	ext := downloader.ExtractImageExtFromURL(url)
+	return pd.downloadFile(ctx, userTitle, screenName, FileTypeAvatar,
+		GetHighResAvatarURL(url, pd.config.AvatarQuality), ext, fetchedAt, "avatar")
 }
 
-func (pd *ProfileDownloader) downloadBanner(ctx context.Context, userTitle, screenName, url string, fetchedAt time.Time) FileResult {
+func (pd *ProfileDownloader) downloadFile(ctx context.Context, userTitle, screenName string, fileType FileType, url, defaultExt string, fetchedAt time.Time, label string) FileResult {
+	filePath := pd.storage.GetFilePathWithExt(userTitle, fileType, defaultExt)
 	client := pd.fetcher.Client()
-	filePath := pd.storage.GetFilePathWithExt(userTitle, FileTypeBanner, ".jpg") // 默认扩展名
 
 	downloadReq := downloader.DownloadRequest{
 		Context:     ctx,
@@ -467,81 +435,28 @@ func (pd *ProfileDownloader) downloadBanner(ctx context.Context, userTitle, scre
 
 	result, err := pd.downloader.Download(downloadReq)
 	if err != nil {
-		fileResult := FileResult{
-			FileType: FileTypeBanner,
-			Status:   StatusFailed,
-			Error:    err,
-		}
-		log.Errorln("banner download failed:", screenName, "-", err)
-		return fileResult
+		log.Errorln(label+" download failed:", screenName, "-", err)
+		return FileResult{FileType: fileType, Status: StatusFailed, Error: err}
 	}
 
 	status := StatusDownloaded
 	if result.Skipped {
 		status = StatusSkipped
 	}
-
-	return FileResult{
-		FileType: FileTypeBanner,
-		Status:   status,
-		FilePath: result.FilePath,
-		OldSize:  result.OldSize,
-		NewSize:  result.FileSize,
-	}
-}
-
-func (pd *ProfileDownloader) saveDescription(userTitle, _ string, description string, fetchedAt time.Time) FileResult {
-	filePath := pd.storage.GetFilePath(userTitle, FileTypeDescription)
-	data := []byte(description)
-
-	writeReq := downloader.WriteRequest{
-		Path: filePath,
-		Data: data,
-		Options: downloader.WriteOptions{
-			CreateVersion: pd.config.EnableVersioning,
-			SkipUnchanged: pd.config.SkipUnchanged,
-			ModTime:       &fetchedAt,
-		},
-	}
-
-	result, err := pd.fileWriter.Write(writeReq)
-	if err != nil {
-		return FileResult{
-			FileType: FileTypeDescription,
-			FilePath: filePath,
-			Status:   StatusFailed,
-			Error:    err,
-		}
-	}
-
-	status := StatusDownloaded
-	if result.Skipped {
-		status = StatusSkipped
-	}
-
-	return FileResult{
-		FileType: FileTypeDescription,
-		Status:   status,
-		FilePath: filePath,
-		OldSize:  result.OldSize,
-		NewSize:  result.NewSize,
-	}
+	return FileResult{FileType: fileType, Status: status, FilePath: result.FilePath, OldSize: result.OldSize, NewSize: result.FileSize}
 }
 
 func (pd *ProfileDownloader) saveProfileJSON(userTitle, screenName string, profile *ProfileInfo, fetchedAt time.Time) FileResult {
-	filePath := pd.storage.GetFilePath(userTitle, FileTypeProfile)
-
 	data, err := ProfileToJSON(profile)
 	if err != nil {
-		result := FileResult{
-			FileType: FileTypeProfile,
-			FilePath: filePath,
-			Status:   StatusFailed,
-			Error:    err,
-		}
 		log.Errorln("profile JSON serialize failed:", screenName, "-", err)
-		return result
+		return FileResult{FileType: FileTypeProfile, Status: StatusFailed, Error: err}
 	}
+	return pd.saveContent(userTitle, FileTypeProfile, data, fetchedAt)
+}
+
+func (pd *ProfileDownloader) saveContent(userTitle string, fileType FileType, data []byte, fetchedAt time.Time) FileResult {
+	filePath := pd.storage.GetFilePath(userTitle, fileType)
 
 	writeReq := downloader.WriteRequest{
 		Path: filePath,
@@ -555,24 +470,12 @@ func (pd *ProfileDownloader) saveProfileJSON(userTitle, screenName string, profi
 
 	result, err := pd.fileWriter.Write(writeReq)
 	if err != nil {
-		return FileResult{
-			FileType: FileTypeProfile,
-			FilePath: filePath,
-			Status:   StatusFailed,
-			Error:    err,
-		}
+		return FileResult{FileType: fileType, FilePath: filePath, Status: StatusFailed, Error: err}
 	}
 
 	status := StatusDownloaded
 	if result.Skipped {
 		status = StatusSkipped
 	}
-
-	return FileResult{
-		FileType: FileTypeProfile,
-		Status:   status,
-		FilePath: filePath,
-		OldSize:  result.OldSize,
-		NewSize:  result.NewSize,
-	}
+	return FileResult{FileType: fileType, Status: status, FilePath: filePath, OldSize: result.OldSize, NewSize: result.NewSize}
 }

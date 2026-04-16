@@ -340,7 +340,13 @@ func main() {
 		downloading.MaxDownloadRoutine = conf.MaxDownloadRoutine
 	}
 	if conf.MaxFileNameLen > 0 {
-		naming.SetMaxFileNameLen(conf.MaxFileNameLen)
+		if conf.MaxFileNameLen < 50 {
+			conf.MaxFileNameLen = 50
+		}
+		if conf.MaxFileNameLen > 250 {
+			conf.MaxFileNameLen = 250
+		}
+		naming.MaxFileNameLen = conf.MaxFileNameLen
 		log.Infoln("max file name length set to:", naming.MaxFileNameLen)
 	}
 
@@ -387,7 +393,7 @@ func main() {
 	}
 	log.Infoln("loaded previous failed tweets:", dumper.Count())
 
-	db, err := connectDatabase(pathHelper.db)
+	db, err := database.Connect(pathHelper.db)
 	if err != nil {
 		log.Fatalln("failed to connect to database:", err)
 	}
@@ -411,8 +417,9 @@ func main() {
 		}
 	}()
 
-	versionManager := downloader.NewVersionManager(".versions")
+	versionManager := downloader.NewVersionManagerWithWriter(".versions", nil)
 	fileWriter := downloader.NewFileWriter(versionManager)
+	versionManager = downloader.NewVersionManagerWithWriter(".versions", fileWriter)
 	dwn := downloader.NewDownloader(fileWriter)
 
 	var todump = make([]*downloading.TweetInEntity, 0)
@@ -431,7 +438,7 @@ func main() {
 			dumper.Push(eid, te.Tweet)
 		}
 		if ctx.Err() != context.Canceled && !noRetry {
-			downloading.RetryFailedTweets(ctx, dumper, db, client, dwn)
+			downloading.RetryFailedTweets(ctx, dumper, db, client, dwn, fileWriter)
 		}
 	}()
 
@@ -460,7 +467,7 @@ func main() {
 		}
 	} else if len(jsonArgs.GetPaths()) > 0 {
 		log.Infof("downloading from %d JSON file(s)...", len(jsonArgs.GetPaths()))
-		results := downloading.DownloadJsonDir(ctx, client, pathHelper.root, dwn, jsonArgs.GetPaths()...)
+		results := downloading.DownloadJsonDir(ctx, client, pathHelper.root, dwn, fileWriter, jsonArgs.GetPaths()...)
 		var successCount, failCount int
 		for _, r := range results {
 			if r.Success {
@@ -473,7 +480,7 @@ func main() {
 		}
 		log.Infof("JSON download completed: %d success, %d failed", successCount, failCount)
 	} else {
-		todump, err = downloading.BatchDownloadAny(ctx, client, db, task.lists, task.users, pathHelper.root, pathHelper.users, autoFollow, addtional, dwn)
+		todump, err = downloading.BatchDownloadAny(ctx, client, db, task.lists, task.users, pathHelper.root, pathHelper.users, autoFollow, addtional, dwn, fileWriter)
 		if err != nil {
 			log.Errorln("failed to download:", err)
 		}
@@ -487,7 +494,7 @@ handleProfile:
 		profileDone := make(chan struct{})
 		go func() {
 			defer close(profileDone)
-			handleProfileDownload(profileCtx, client, addtional, pathHelper.users, profileUsers, profileList, task, db, shouldDownloadProfile, dwn, fileWriter)
+			handleProfileDownload(profileCtx, client, addtional, pathHelper.users, profileUsers, profileList, task, db, shouldDownloadProfile, dwn, fileWriter, versionManager)
 		}()
 		select {
 		case <-profileDone:
@@ -512,26 +519,7 @@ func setClientLogger(client *resty.Client, out io.Writer) {
 	client.SetLogger(logger)
 }
 
-func connectDatabase(path string) (*sqlx.DB, error) {
-	ex, err := utils.PathExists(path)
-	if err != nil {
-		return nil, err
-	}
-
-	dsn := fmt.Sprintf("file:%s?_journal_mode=WAL&busy_timeout=2147483647", path)
-	db, err := sqlx.Connect("sqlite3", dsn)
-	if err != nil {
-		return nil, err
-	}
-	database.CreateTables(db)
-	database.MigrateDatabase(db)
-	if !ex {
-		log.Debugln("created new db file", path)
-	}
-	return db, nil
-}
-
-func handleProfileDownload(ctx context.Context, client *resty.Client, additional []*resty.Client, usersPath string, profileUsers userArgs, profileList ListArgs, task *Task, db *sqlx.DB, skipAPIFetch bool, dwn downloader.Downloader, fileWriter downloader.FileWriter) {
+func handleProfileDownload(ctx context.Context, client *resty.Client, additional []*resty.Client, usersPath string, profileUsers userArgs, profileList ListArgs, task *Task, db *sqlx.DB, skipAPIFetch bool, dwn downloader.Downloader, fileWriter downloader.FileWriter, versionManager downloader.VersionManager) {
 	clients := make([]*resty.Client, 0)
 	clients = append(clients, client)
 	clients = append(clients, additional...)
@@ -540,6 +528,7 @@ func handleProfileDownload(ctx context.Context, client *resty.Client, additional
 	if err != nil {
 		log.Fatalln("failed to create profile storage:", err)
 	}
+	storage.SetVersionManager(versionManager)
 
 	profileDownloader := profile.NewProfileDownloaderWithDB(nil, storage, clients, db, dwn, fileWriter)
 

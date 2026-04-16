@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -36,7 +37,7 @@ func calcUserDepth(exist int, total int) int {
 	return depth
 }
 
-func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, users []userInListEntity, dir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader) ([]*TweetInEntity, error) {
+func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, users []userInListEntity, dir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter) ([]*TweetInEntity, error) {
 	if len(users) == 0 {
 		return nil, nil
 	}
@@ -165,8 +166,13 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 
 			linkpath, err := curlink.Path(db)
 			if err == nil {
-				if err = os.Symlink(upath, linkpath); err == nil || os.IsExist(err) {
-					err = database.CreateUserLink(db, curlink)
+				linkDir := filepath.Dir(linkpath)
+				if mkdirErr := os.MkdirAll(linkDir, 0755); mkdirErr == nil {
+					if err = os.Symlink(upath, linkpath); err == nil || os.IsExist(err) {
+						err = database.CreateUserLink(db, curlink)
+					}
+				} else {
+					err = mkdirErr
 				}
 			}
 			if err != nil {
@@ -203,7 +209,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			return
 		}
 
-		cli := twitter.SelectClientMFQ(ctx, client, additional, user, twitter.UserMediaPath())
+		cli := twitter.SelectClientMFQ(ctx, client, additional, user, "/i/api/graphql/MOLbHrtk8Ovu7DUNOLcXiA/UserMedia")
 		if ctx.Err() != nil {
 			userEntityHeap.Push(ent)
 			return
@@ -278,10 +284,12 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 		wg:         &conswg,
 		cancel:     cancel,
 		downloader: dwn,
+		fileWriter: fileWriter,
+		client:     client,
 	}
 	for i := 0; i < MaxDownloadRoutine; i++ {
 		conswg.Add(1)
-		go tweetDownloader(client, &config, errChan, tweetChan)
+		go tweetDownloader(&config, errChan, tweetChan)
 	}
 
 	producerPool, err := ants.NewPool(min(userTweetMaxConcurrent, userEntityHeap.Size()))

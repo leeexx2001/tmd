@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -255,7 +254,7 @@ func makeRateLimit(resp *resty.Response) *xRateLimit {
 	}
 
 	u, _ := url.Parse(resp.Request.URL)
-	url := filepath.Join(u.Host, u.Path)
+	urlStr := u.Host + u.Path
 
 	resetTimeTime := time.Unix(resetTimeNum, 0)
 	return &xRateLimit{
@@ -263,7 +262,7 @@ func makeRateLimit(resp *resty.Response) *xRateLimit {
 		Remaining: remainingNum,
 		Limit:     limitNum,
 		Ready:     true,
-		Url:       url,
+		Url:       urlStr,
 	}
 }
 
@@ -363,7 +362,9 @@ func (*rateLimiter) shouldWork(url *url.URL) bool {
 
 func (rl *rateLimiter) wouldBlock(path string) bool {
 	if v, ok := rl.limits.Load(path); ok {
-		return v.(*xRateLimit) != nil && v.(*xRateLimit).wouldBlock()
+		if limit, ok := v.(*xRateLimit); ok {
+			return limit != nil && limit.wouldBlock()
+		}
 	}
 	return false
 }
@@ -528,31 +529,6 @@ func SelectClient(ctx context.Context, clients []*resty.Client, path string) *re
 	return nil
 }
 
-func SelectUserMediaClient(ctx context.Context, clients []*resty.Client) *resty.Client {
-	return SelectClient(ctx, clients, (&userMedia{}).Path())
-}
-
-func SelectProfileClient(ctx context.Context, clients []*resty.Client) *resty.Client {
-	return SelectClient(ctx, clients, (&userByScreenName{}).Path())
-}
-
-// UserMediaPath 返回 UserMedia API 的路径
-func UserMediaPath() string {
-	return (&userMedia{}).Path()
-}
-
-// isClientAvailable 检查客户端是否可用（内存检查，不产生网络请求）
-func isClientAvailable(client *resty.Client, path string) bool {
-	if GetClientError(client) != nil {
-		return false
-	}
-	rl := GetClientRateLimiter(client)
-	if rl != nil && rl.wouldBlock(path) {
-		return false
-	}
-	return true
-}
-
 // SelectClientMFQ 带指数退避的 MFQ 客户端选择
 // Q1: 只用附加账户（非受保护用户优先）
 // Q2: 附加账户 + 主账户 + 指数退避
@@ -565,7 +541,11 @@ func SelectClientMFQ(ctx context.Context, master *resty.Client, additional []*re
 
 	// Q1: 只用附加账户
 	for _, cli := range additional {
-		if isClientAvailable(cli, path) {
+		if GetClientError(cli) != nil {
+			continue
+		}
+		rl := GetClientRateLimiter(cli)
+		if rl == nil || !rl.wouldBlock(path) {
 			return cli
 		}
 	}

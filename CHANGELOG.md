@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.10.0] - 2026-04-15
+
+### Added
+
+#### 新增数据库连接模块 (`internal/database/connect.go`)
+
+统一的数据库连接管理：
+- `Connect(path)` - 连接数据库并自动执行迁移
+- 支持 WAL 模式 (`_journal_mode=WAL`)
+- 自动创建表结构和迁移
+
+#### 新增 Downloader 辅助函数 (`internal/downloader/helpers.go`)
+
+- `ExtractImageExtFromURL(url)` - 从 URL 提取图片扩展名
+- 支持 `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`
+- 无效扩展名默认返回 `.jpg`
+
+#### 命名服务重构 (`internal/naming/`)
+
+将原来的 `naming.go` 拆分为职责更清晰的文件：
+
+| 文件 | 功能 |
+|------|------|
+| `base.go` | 基础命名结构，定义 `MaxFileNameLen` |
+| `tweet_naming.go` | 推文命名（`TweetNaming`） |
+| `user_naming.go` | 用户命名（`UserNaming`） |
+| `list_naming.go` | 列表命名（`ListNaming`） |
+
+### Changed
+
+#### 架构优化
+
+| 模块 | 变化 |
+|------|------|
+| `internal/downloader/` | 增强测试覆盖（+358 行测试代码），优化文件写入和版本管理 |
+| `internal/downloading/` | 优化实体处理、批处理逻辑，改进重试机制 |
+| `internal/profile/` | 简化下载器、获取器、存储层，减少重复代码 |
+| `internal/twitter/` | 优化客户端、列表、用户处理逻辑 |
+| `internal/utils/` | 清理冗余代码，优化算法实现 |
+| `main.go` | 精简 43 行，使用新的数据库连接模块 |
+
+#### .gitignore 完善
+
+新增大量忽略规则：
+- IDE/编辑器文件（.vscode/, .idea/）
+- Go 构建产物（*.exe, *.test, bin/）
+- 数据库文件（*.db, *.sqlite）
+- 日志文件（*.log, logs/）
+- 环境配置（.env）
+- 临时文件（tmp/, temp/）
+
+### Stats
+
+- **32 个文件变更**
+- **+827 行 / -590 行**
+- **新增文件：** 7 个
+- **删除文件：** 1 个（`internal/naming/naming.go`）
+
+---
+
 ## [2.9.2] - 2026-04-15
 
 ### Fixed
@@ -21,9 +81,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **问题：** 同一推文的多个媒体文件使用相同的文件名，导致后下载的文件覆盖先下载的文件。
 
-**修复：** 为同一推文的多个媒体文件添加序号后缀：
-- 单媒体文件：`{tweet_id}.{ext}`
-- 多媒体文件：`{tweet_id}_1.{ext}`, `{tweet_id}_2.{ext}`, ...
+**修复：** 采用互斥锁保护文件名生成，使用 `utils.UniquePath` 自动处理文件名冲突：
+- 首次下载：`{text}_{tweet_id}.jpg`, `{text}_{tweet_id}(1).jpg`, `{text}_{tweet_id}(2).jpg`...
+- 文件已存在时：自动继续序号，避免覆盖
 
 ---
 

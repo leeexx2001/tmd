@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -22,8 +21,10 @@ import (
 	"github.com/unkmonster/tmd/internal/utils"
 )
 
-func saveTweetJson(dir string, tweet *twitter.Tweet, namingObj *naming.TweetNaming) {
-	if dir == "" || tweet == nil {
+var mediaMutex sync.Mutex
+
+func saveTweetJson(cfg *workerConfig, dir string, tweet *twitter.Tweet, namingObj *naming.TweetNaming) {
+	if dir == "" || tweet == nil || cfg.fileWriter == nil {
 		return
 	}
 
@@ -31,14 +32,9 @@ func saveTweetJson(dir string, tweet *twitter.Tweet, namingObj *naming.TweetNami
 		defer utils.RecoverWithLog("saveTweetJson")
 
 		loongDir := filepath.Join(dir, ".loongtweet")
-		os.MkdirAll(loongDir, 0755)
 
 		jsonPath, err := namingObj.FilePath(loongDir, ".json")
 		if err != nil {
-			return
-		}
-
-		if tweet.RawJSON == "" {
 			return
 		}
 
@@ -52,14 +48,22 @@ func saveTweetJson(dir string, tweet *twitter.Tweet, namingObj *naming.TweetNami
 			return
 		}
 
-		if err := os.WriteFile(jsonPath, formatted, 0645); err == nil {
-			os.Chtimes(jsonPath, time.Time{}, tweet.CreatedAt)
+		writeReq := downloader.WriteRequest{
+			Path: jsonPath,
+			Data: formatted,
+			Options: downloader.WriteOptions{
+				ModTime: &tweet.CreatedAt,
+			},
+		}
+
+		if _, err := cfg.fileWriter.Write(writeReq); err != nil {
+			log.Warnf("failed to write tweet json: %v", err)
 		}
 	}()
 }
 
-func saveLoongTweet(dir string, tweet *twitter.Tweet, namingObj *naming.TweetNaming) {
-	if dir == "" || tweet == nil {
+func saveLoongTweet(cfg *workerConfig, dir string, tweet *twitter.Tweet, namingObj *naming.TweetNaming) {
+	if dir == "" || tweet == nil || cfg.fileWriter == nil {
 		return
 	}
 
@@ -67,7 +71,6 @@ func saveLoongTweet(dir string, tweet *twitter.Tweet, namingObj *naming.TweetNam
 		defer utils.RecoverWithLog("saveLoongTweet")
 
 		loongDir := filepath.Join(dir, ".loongtweet")
-		os.MkdirAll(loongDir, 0755)
 
 		txtPath, err := namingObj.FilePath(loongDir, ".txt")
 		if err != nil {
@@ -117,8 +120,16 @@ func saveLoongTweet(dir string, tweet *twitter.Tweet, namingObj *naming.TweetNam
 			mediaCount,
 			text)
 
-		if err := os.WriteFile(txtPath, []byte(txtContent), 0645); err == nil {
-			os.Chtimes(txtPath, time.Time{}, createdAt)
+		writeReq := downloader.WriteRequest{
+			Path: txtPath,
+			Data: []byte(txtContent),
+			Options: downloader.WriteOptions{
+				ModTime: &createdAt,
+			},
+		}
+
+		if _, err := cfg.fileWriter.Write(writeReq); err != nil {
+			log.Warnf("failed to write loongtweet txt: %v", err)
 		}
 	}()
 }
@@ -189,7 +200,7 @@ func cleanMediaRecursive(data any) {
 
 						if mediaType, ok := m["type"].(string); ok && mediaType == "photo" {
 							if rawUrl, ok := m["media_url_https"].(string); ok {
-								if strings.Contains(rawUrl, "twimg.com") {
+								if strings.Contains(rawUrl, "twimg.com") && !strings.Contains(rawUrl, "?name=") {
 									m["media_url_https"] = rawUrl + "?name=4096x4096"
 								}
 							}
@@ -208,7 +219,7 @@ func cleanMediaRecursive(data any) {
 	}
 }
 
-func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, tweet *twitter.Tweet, skipLoongTweet bool, dwn downloader.Downloader) error {
+func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, skipLoongTweet bool) error {
 	var creatorTitle string
 	if tweet.Creator != nil {
 		creatorTitle = tweet.Creator.Title()
@@ -218,55 +229,48 @@ func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, t
 	tweetNaming := naming.NewTweetNaming(tweet.Text, tweet.Id, creatorTitle)
 
 	if !skipLoongTweet {
-		saveTweetJson(dir, tweet, tweetNaming)
-		saveLoongTweet(dir, tweet, tweetNaming)
+		saveTweetJson(cfg, dir, tweet, tweetNaming)
+		saveLoongTweet(cfg, dir, tweet, tweetNaming)
 	}
 
-	reqs := make([]downloader.DownloadRequest, 0, len(tweet.Urls))
-	for i, u := range tweet.Urls {
+	for _, u := range tweet.Urls {
 		ext, err := utils.GetExtFromUrl(u)
 		if err != nil {
-			return err
-		}
-
-		// 为同一推文的多个媒体文件生成唯一文件名
-		var path string
-		if len(tweet.Urls) > 1 {
-			path, err = tweetNaming.FilePath(dir, fmt.Sprintf("_%d%s", i+1, ext))
-		} else {
-			path, err = tweetNaming.FilePath(dir, ext)
-		}
-		if err != nil {
-			return err
+			ext = ".jpg"
 		}
 
 		queryParams := make(map[string]string)
-		if !strings.Contains(u, "tweet_video") && !strings.Contains(u, "video.twimg.com") {
+		if !strings.Contains(u, "tweet_video") && !strings.Contains(u, "video.twimg.com") && !strings.Contains(u, "?name=") {
 			queryParams["name"] = "4096x4096"
 		}
 
-		reqs = append(reqs, downloader.DownloadRequest{
-			Context:     ctx,
-			Client:      client,
+		mediaMutex.Lock()
+		path, err := tweetNaming.FilePath(dir, ext)
+		if err != nil {
+			mediaMutex.Unlock()
+			continue
+		}
+		mediaMutex.Unlock()
+
+		req := downloader.DownloadRequest{
+			Context:     cfg.ctx,
+			Client:      cfg.client,
 			URL:         u,
 			Destination: path,
 			Options: downloader.DownloadOptions{
-				QueryParams:   queryParams,
-				SkipUnchanged: false,
-				CreateVersion: false,
-				SetModTime:    &tweet.CreatedAt,
+				QueryParams: queryParams,
+				SetModTime:  &tweet.CreatedAt,
 			},
-		})
-	}
+		}
 
-	results, err := dwn.BatchDownload(ctx, reqs)
-	if err != nil {
-		return err
-	}
-
-	for _, result := range results {
-		if !result.Success && !result.Skipped {
-			return result.Error
+		result, err := cfg.downloader.Download(req)
+		if err != nil {
+			log.Warnln("failed to download media:", u, "-", err)
+			continue
+		}
+		if !result.Success {
+			log.Warnln("media download reported failure:", u, "-", result.Error)
+			continue
 		}
 	}
 
@@ -274,7 +278,7 @@ func downloadTweetMedia(ctx context.Context, client *resty.Client, dir string, t
 	return nil
 }
 
-func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- PackagedTweet, twech <-chan PackagedTweet) {
+func tweetDownloader(config *workerConfig, errch chan<- PackagedTweet, twech <-chan PackagedTweet) {
 	var pt PackagedTweet
 	var ok bool
 
@@ -318,8 +322,8 @@ func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- Pa
 							userDirName := userNaming.SanitizedTitle()
 							userDir := filepath.Join(parentDir, userDirName)
 							tweetNaming := naming.NewTweetNaming(tweet.Text, tweet.Id, tweet.Creator.Title())
-							saveTweetJson(userDir, tweet, tweetNaming)
-							saveLoongTweet(userDir, tweet, tweetNaming)
+							saveTweetJson(config, userDir, tweet, tweetNaming)
+							saveLoongTweet(config, userDir, tweet, tweetNaming)
 						}
 					}
 				}
@@ -327,7 +331,7 @@ func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- Pa
 			errch <- pt
 			continue
 		}
-		err := downloadTweetMedia(config.ctx, client, path, pt.GetTweet(), config.skipLoongTweet, config.downloader)
+		err := downloadTweetMedia(config, path, pt.GetTweet(), config.skipLoongTweet)
 		if err != nil && !utils.IsStatusCode(err, 404) && !utils.IsStatusCode(err, 403) {
 			errch <- pt
 		}
@@ -338,7 +342,7 @@ func tweetDownloader(client *resty.Client, config *workerConfig, errch chan<- Pa
 	}
 }
 
-func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTweet bool, dwn downloader.Downloader, pts ...PackagedTweet) []PackagedTweet {
+func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTweet bool, dwn downloader.Downloader, fileWriter downloader.FileWriter, pts ...PackagedTweet) []PackagedTweet {
 	if len(pts) == 0 {
 		return nil
 	}
@@ -361,10 +365,12 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 		wg:             &wg,
 		skipLoongTweet: skipLoongTweet,
 		downloader:     dwn,
+		fileWriter:     fileWriter,
+		client:         client,
 	}
 	for i := 0; i < numRoutine; i++ {
 		wg.Add(1)
-		go tweetDownloader(client, &config, errChan, tweetChan)
+		go tweetDownloader(&config, errChan, tweetChan)
 	}
 
 	go func() {

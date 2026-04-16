@@ -27,7 +27,7 @@ func getTweetAndUpdateLatestReleaseTime(ctx context.Context, client *resty.Clien
 	return tweets, nil
 }
 
-func DownloadUser(ctx context.Context, db *sqlx.DB, client *resty.Client, user *twitter.User, dir string, dwn downloader.Downloader) ([]PackagedTweet, error) {
+func DownloadUser(ctx context.Context, db *sqlx.DB, client *resty.Client, user *twitter.User, dir string, dwn downloader.Downloader, fileWriter downloader.FileWriter) ([]PackagedTweet, error) {
 	if user.Blocking || user.Muting {
 		return nil, nil
 	}
@@ -53,5 +53,5 @@ func DownloadUser(ctx context.Context, db *sqlx.DB, client *resty.Client, user *
 		pts = append(pts, TweetInEntity{Tweet: tw, Entity: entity})
 	}
 
-	return BatchDownloadTweet(ctx, client, false, dwn, pts...), nil
+	return BatchDownloadTweet(ctx, client, false, dwn, fileWriter, pts...), nil
 }

@@ -81,12 +81,8 @@ type DownloadResult struct {
 
 // Config 下载器配置
 type Config struct {
-	// 存储根目录，默认为 ~/.loongtweet/.profile
-	RootPath string
 	// 是否启用版本管理
 	EnableVersioning bool
-	// 下载间隔（批量下载时使用）
-	DownloadInterval time.Duration
 	// 是否跳过已存在的未变更文件
 	SkipUnchanged bool
 	// 头像图片质量 (如 "400x400", "200x200")
@@ -96,9 +92,7 @@ type Config struct {
 // DefaultConfig 返回默认配置
 func DefaultConfig() *Config {
 	return &Config{
-		RootPath:         "",
 		EnableVersioning: true,
-		DownloadInterval: 0,
 		SkipUnchanged:    true,
 		AvatarQuality:    "400x400",
 	}
@@ -106,23 +100,15 @@ func DefaultConfig() *Config {
 
 // Downloader 下载器接口
 type Downloader interface {
-	Download(ctx context.Context, screenName string) (*DownloadResult, error)
-	DownloadMultiple(ctx context.Context, screenNames []string) []*DownloadResult
+	Download(ctx context.Context, req DownloadRequest) (*DownloadResult, error)
+	DownloadMultiple(ctx context.Context, requests []DownloadRequest) []*DownloadResult
 }
 
 // StorageManager 存储管理器接口
 type StorageManager interface {
 	EnsureDirectory(screenName string) (string, error)
 	GetFilePath(screenName string, fileType FileType) string
-	GetVersionPath(screenName string, fileType FileType, timestamp time.Time) string
-	FileExists(path string) (bool, FileInfo, error)
-}
-
-// FileInfo 文件信息
-type FileInfo struct {
-	Path    string
-	Size    int64
-	ModTime time.Time
+	GetFilePathWithExt(screenName string, fileType FileType, ext string) string
 }
 
 // Fetcher 远程数据获取器接口
@@ -149,13 +135,4 @@ func (e *ProfileError) Error() string {
 
 func (e *ProfileError) Unwrap() error {
 	return e.Err
-}
-
-// IsNotFound 检查是否为"用户不存在"错误
-func IsNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	// 这里可以根据实际错误类型进行判断
-	return false
 }

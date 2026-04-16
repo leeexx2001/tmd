@@ -17,6 +17,8 @@ type TwitterFetcher struct {
 	mu      sync.Mutex
 }
 
+var reNormalAvatarURL = regexp.MustCompile(`_normal(\.[a-zA-Z]+)$`)
+
 func NewTwitterFetcher(client *resty.Client) *TwitterFetcher {
 	return &TwitterFetcher{clients: []*resty.Client{client}}
 }
@@ -30,7 +32,7 @@ func NewTwitterFetcherWithClients(clients []*resty.Client) *TwitterFetcher {
 
 func (tf *TwitterFetcher) FetchProfile(ctx context.Context, screenName string) (*ProfileInfo, error) {
 	tf.mu.Lock()
-	client := twitter.SelectProfileClient(ctx, tf.clients)
+	client := twitter.SelectClient(ctx, tf.clients, "/i/api/graphql/xmU6X_CKVnQ5lSrCbAmJsg/UserByScreenName")
 	tf.mu.Unlock()
 
 	if client == nil {
@@ -96,7 +98,7 @@ func (tf *TwitterFetcher) FetchAvatar(ctx context.Context, url string) ([]byte, 
 	}
 
 	if resp.StatusCode() >= 400 {
-		return nil, fmt.Errorf("avatar fetch failed with status %d: %s", resp.StatusCode(), resp.String())
+		return nil, fmt.Errorf("avatar fetch failed with status %d, content-length: %d", resp.StatusCode(), len(resp.Body()))
 	}
 
 	return resp.Body(), nil
@@ -118,7 +120,7 @@ func (tf *TwitterFetcher) FetchBanner(ctx context.Context, url string) ([]byte, 
 	}
 
 	if resp.StatusCode() >= 400 {
-		return nil, "", fmt.Errorf("banner fetch failed with status %d: %s", resp.StatusCode(), resp.String())
+		return nil, "", fmt.Errorf("banner fetch failed with status %d, content-length: %d", resp.StatusCode(), len(resp.Body()))
 	}
 
 	ext := ".jpg"
@@ -167,9 +169,7 @@ func GetHighResAvatarURL(url string, quality string) string {
 	if url == "" {
 		return ""
 	}
-
-	re := regexp.MustCompile(`_normal(\.[a-zA-Z]+)$`)
-	return re.ReplaceAllString(url, "_"+quality+"$1")
+	return reNormalAvatarURL.ReplaceAllString(url, "_"+quality+"$1")
 }
 
 func ProfileToJSON(profile *ProfileInfo) ([]byte, error) {

@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/go-resty/resty/v2"
 	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/entity"
 	"github.com/unkmonster/tmd/internal/twitter"
@@ -66,6 +67,8 @@ type workerConfig struct {
 	cancel         context.CancelCauseFunc
 	skipLoongTweet bool
 	downloader     downloader.Downloader
+	fileWriter     downloader.FileWriter
+	client         *resty.Client
 }
 
 const userTweetRateLimit = 1500
