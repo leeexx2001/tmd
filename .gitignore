@@ -57,6 +57,7 @@ downloads/
 Desktop.ini
 *.bak
 *.tmp
+.tmd2.lnk
 
 # === Project Specific ===
 # 旧版本备份

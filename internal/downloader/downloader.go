@@ -1,9 +1,7 @@
 package downloader
 
 import (
-	"context"
 	"fmt"
-	"sync"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -26,12 +24,6 @@ func NewDownloader(fileWriter FileWriter) *DefaultDownloader {
 func (d *DefaultDownloader) Download(req DownloadRequest) (*DownloadResult, error) {
 	result := &DownloadResult{}
 
-	// 回调：下载前
-	if req.Options.OnBeforeDownload != nil {
-		req.Options.OnBeforeDownload(&req)
-	}
-
-	// 构建请求
 	r := req.Client.R().SetContext(req.Context)
 	for k, v := range req.Options.QueryParams {
 		r = r.SetQueryParam(k, v)
@@ -77,54 +69,5 @@ func (d *DefaultDownloader) Download(req DownloadRequest) (*DownloadResult, erro
 	result.FileSize = writeResult.NewSize
 	result.OldSize = writeResult.OldSize
 
-	// 回调：下载后
-	if req.Options.OnAfterDownload != nil {
-		req.Options.OnAfterDownload(result)
-	}
-
 	return result, nil
-}
-
-// BatchDownload 批量下载（并发，支持上下文取消）
-func (d *DefaultDownloader) BatchDownload(ctx context.Context, reqs []DownloadRequest) ([]*DownloadResult, error) {
-	results := make([]*DownloadResult, len(reqs))
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var firstErr error
-
-	for i, req := range reqs {
-		// 检查上下文是否已取消
-		select {
-		case <-ctx.Done():
-			return results, ctx.Err()
-		default:
-		}
-
-		wg.Add(1)
-		go func(index int, request DownloadRequest) {
-			defer wg.Done()
-
-			// 检查上下文是否已取消
-			select {
-			case <-ctx.Done():
-				mu.Lock()
-				results[index] = &DownloadResult{Error: ctx.Err()}
-				mu.Unlock()
-				return
-			default:
-			}
-
-			result, err := d.Download(request)
-
-			mu.Lock()
-			results[index] = result
-			if err != nil && firstErr == nil {
-				firstErr = err
-			}
-			mu.Unlock()
-		}(i, req)
-	}
-
-	wg.Wait()
-	return results, firstErr
 }

@@ -97,21 +97,6 @@ func testUser(t *testing.T, usr *User) {
 		t.Error(err)
 		return
 	}
-
-	// delete
-	if err = DelUser(db, usr.Id); err != nil {
-		t.Error(err)
-		return
-	}
-
-	usr, err = GetUserById(db, usr.Id)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	if usr != nil {
-		t.Error("record mismatch after delete user")
-	}
 }
 
 func hasSameUserRecord(usr *User) (bool, error) {
@@ -166,21 +151,6 @@ func TestList(t *testing.T) {
 		}
 		if !same {
 			t.Error("record mismatch after update lst")
-			return
-		}
-
-		// delete
-		if err = DelLst(db, lst.Id); err != nil {
-			t.Error(err)
-			return
-		}
-		record, err := GetLst(db, lst.Id)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		if record != nil {
-			t.Error("record mismatch after delete lst")
 			return
 		}
 	}
@@ -482,21 +452,6 @@ func TestLink(t *testing.T) {
 		}
 		if !yes {
 			t.Error("mismatch record after update user link")
-			return
-		}
-
-		// d
-		if err := DelUserLink(db, link.Id.Int32); err != nil {
-			t.Error(err)
-			return
-		}
-		yes, err = hasSameUserLinkRecord(link)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		if yes {
-			t.Error("mismatch record after delete user link")
 			return
 		}
 	}

@@ -80,7 +80,6 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	})
 
 	start := time.Now()
-	deepest := 0
 
 	func() {
 		defer panicHandler()
@@ -128,7 +127,6 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 					missingTweets += max(0, user.MediaCount-int(pathEntity.MediaCount()))
 					depthByEntity[pathEntity] = calcUserDepth(int(pathEntity.MediaCount()), user.MediaCount)
 					userEntityHeap.Push(pathEntity)
-					deepest = max(deepest, depthByEntity[pathEntity])
 				}
 
 				if user.IsProtected && user.Followstate == twitter.FS_UNFOLLOW && autoFollow {
@@ -192,7 +190,6 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 	log.Debugln("preprocessing finish, elapsed:", time.Since(start))
 	log.Debugln("real members:", userEntityHeap.Size())
 	log.Debugln("missing tweets:", missingTweets)
-	log.Debugln("deepest:", deepest)
 	if symlinkWarnCount > 0 {
 		log.Warnf("symlink permission denied: %d errors suppressed (run as admin to enable symlinks)", symlinkWarnCount)
 	}

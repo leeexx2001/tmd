@@ -16,19 +16,6 @@ type PackagedTweet interface {
 	GetPath() string
 }
 
-type TweetInDir struct {
-	tweet *twitter.Tweet
-	path  string
-}
-
-func (pt TweetInDir) GetTweet() *twitter.Tweet {
-	return pt.tweet
-}
-
-func (pt TweetInDir) GetPath() string {
-	return pt.path
-}
-
 type TweetInEntity struct {
 	Tweet  *twitter.Tweet
 	Entity *entity.UserEntity

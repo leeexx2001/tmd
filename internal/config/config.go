@@ -123,7 +123,6 @@ func PromptConfig(saveto string) (*Config, error) {
 }
 
 func ReadAdditionalCookies(path string) ([]*Cookie, error) {
-	res := []*Cookie{}
 	file, err := os.OpenFile(path, os.O_RDONLY, 0)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -138,5 +137,6 @@ func ReadAdditionalCookies(path string) ([]*Cookie, error) {
 		return nil, err
 	}
 
+	var res []*Cookie
 	return res, yaml.Unmarshal(data, &res)
 }

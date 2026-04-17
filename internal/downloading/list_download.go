@@ -7,48 +7,11 @@ import (
 	"github.com/jmoiron/sqlx"
 	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
-	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/entity"
 	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/twitter"
 	"github.com/unkmonster/tmd/internal/utils"
 )
-
-func downloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, additional []*resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter) ([]*TweetInEntity, error) {
-	expectedTitle := naming.NewListNamingFromBase(list).SanitizedTitle()
-	ent, err := entity.NewListEntity(db, list.GetId(), dir)
-	if err != nil {
-		return nil, err
-	}
-	if err := entity.Sync(ent, expectedTitle); err != nil {
-		return nil, err
-	}
-
-	membersResult, err := list.GetMembers(ctx, client)
-	if err != nil {
-		return nil, err
-	}
-
-	eid, err := ent.Id()
-	if err != nil {
-		return nil, err
-	}
-
-	members := membersResult.Users
-	if len(members) == 0 {
-		return nil, nil
-	}
-	log.Debugln("members:", len(members))
-
-	uids := utils.ExtractIDs(members, func(u *twitter.User) uint64 { return u.Id })
-	database.MarkListMembersAccessibleByIDs(db, uids)
-
-	packgedUsers := make([]userInListEntity, len(members))
-	for i, user := range members {
-		packgedUsers[i] = userInListEntity{user: user, leid: &eid}
-	}
-	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, true, additional, dwn, fileWriter)
-}
 
 func syncList(db *sqlx.DB, list *twitter.List) error {
 	listdb, err := database.GetLst(db, list.Id)
@@ -59,16 +22,6 @@ func syncList(db *sqlx.DB, list *twitter.List) error {
 		return database.CreateLst(db, &database.Lst{Id: list.Id, Name: list.Name, OwnerId: list.Creator.Id})
 	}
 	return database.UpdateLst(db, &database.Lst{Id: list.Id, Name: list.Name, OwnerId: list.Creator.Id})
-}
-
-func DownloadList(ctx context.Context, client *resty.Client, db *sqlx.DB, list twitter.ListBase, dir string, realDir string, additional []*resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter) ([]*TweetInEntity, error) {
-	tlist, ok := list.(*twitter.List)
-	if ok {
-		if err := syncList(db, tlist); err != nil {
-			return nil, err
-		}
-	}
-	return downloadList(ctx, client, db, list, dir, realDir, additional, dwn, fileWriter)
 }
 
 func syncListAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB, lst twitter.ListBase, dir string) ([]userInListEntity, error) {

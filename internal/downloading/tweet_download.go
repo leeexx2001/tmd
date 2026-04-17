@@ -164,10 +164,7 @@ func cleanTweetJson(raw []byte) (any, error) {
 				delete(result, "id")
 				if userLegacy, ok := result["legacy"].(map[string]any); ok {
 					if profileImg, ok := userLegacy["profile_image_url_https"].(string); ok {
-						profileImg = strings.Replace(profileImg, "_normal", "", 1)
-						profileImg = strings.Replace(profileImg, "_bigger", "", 1)
-						profileImg = strings.Replace(profileImg, "_mini", "", 1)
-						userLegacy["profile_image_url_https"] = profileImg
+						userLegacy["profile_image_url_https"] = utils.StripAvatarSuffix(profileImg)
 					}
 				}
 			}

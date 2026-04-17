@@ -289,18 +289,6 @@ func FollowUser(ctx context.Context, client *resty.Client, user *User) error {
 	url := "https://x.com/i/api/1.1/friendships/create.json"
 	_, err := client.R().SetFormData(map[string]string{
 		"user_id": fmt.Sprintf("%d", user.Id),
-		// "skip_status":                       1,
-		// "include_profile_interstitial_type": 1,
-		// "include_blocking":                  1,
-		// "include_blocked_by":                1,
-		// "include_followed_by":               1,
-		// "include_want_retweets":             1,
-		// "include_mute_edge":                 1,
-		// "include_can_dm":                    1,
-		// "include_can_media_tag":             1,
-		// "include_ext_is_blue_verified":      1,
-		// "include_ext_verified_type":         1,
-		// "include_ext_profile_image_shape":   1,
 	}).SetContext(ctx).Post(url)
 	return err
 }

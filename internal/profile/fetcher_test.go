@@ -119,7 +119,6 @@ func TestFileStatusString(t *testing.T) {
 		{StatusFailed, "failed"},
 		{StatusDownloaded, "downloaded"},
 		{StatusSkipped, "skipped"},
-		{StatusVersioned, "versioned"},
 		{FileStatus(99), "unknown"},
 	}
 	for _, tt := range tests {

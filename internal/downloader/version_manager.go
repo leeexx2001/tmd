@@ -23,6 +23,10 @@ func NewVersionManagerWithWriter(versionsDirName string, fw FileWriter) *Default
 	}
 }
 
+func (vm *DefaultVersionManager) SetFileWriter(fw FileWriter) {
+	vm.fileWriter = fw
+}
+
 // CreateVersion 创建版本备份
 func (vm *DefaultVersionManager) CreateVersion(sourcePath string) (string, error) {
 	// P1: 空路径校验

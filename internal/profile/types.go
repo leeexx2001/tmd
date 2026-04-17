@@ -40,7 +40,6 @@ const (
 	StatusFailed FileStatus = iota
 	StatusDownloaded
 	StatusSkipped
-	StatusVersioned
 )
 
 func (s FileStatus) String() string {
@@ -51,8 +50,6 @@ func (s FileStatus) String() string {
 		return "downloaded"
 	case StatusSkipped:
 		return "skipped"
-	case StatusVersioned:
-		return "versioned"
 	default:
 		return "unknown"
 	}
@@ -60,13 +57,12 @@ func (s FileStatus) String() string {
 
 // FileResult 单个文件下载结果
 type FileResult struct {
-	FileType    FileType
-	FilePath    string
-	Status      FileStatus
-	OldSize     int64
-	NewSize     int64
-	VersionPath string
-	Error       error
+	FileType FileType
+	FilePath string
+	Status   FileStatus
+	OldSize  int64
+	NewSize  int64
+	Error    error
 }
 
 // DownloadResult 下载结果
@@ -98,24 +94,9 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Downloader 下载器接口
-type Downloader interface {
-	Download(ctx context.Context, req DownloadRequest) (*DownloadResult, error)
-	DownloadMultiple(ctx context.Context, requests []DownloadRequest) []*DownloadResult
-}
-
-// StorageManager 存储管理器接口
-type StorageManager interface {
-	EnsureDirectory(screenName string) (string, error)
-	GetFilePath(screenName string, fileType FileType) string
-	GetFilePathWithExt(screenName string, fileType FileType, ext string) string
-}
-
 // Fetcher 远程数据获取器接口
 type Fetcher interface {
 	FetchProfile(ctx context.Context, screenName string) (*ProfileInfo, error)
-	FetchAvatar(ctx context.Context, url string) ([]byte, error)
-	FetchBanner(ctx context.Context, url string) ([]byte, string, error)
 	Client() *resty.Client
 }
 

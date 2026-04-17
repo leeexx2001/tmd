@@ -107,29 +107,3 @@ func GetExtFromUrl(u string) (string, error) {
 	}
 	return filepath.Ext(pu.Path), nil
 }
-
-func CopyFile(src, dst string) error {
-	sourceFile, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer sourceFile.Close()
-
-	destFile, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer destFile.Close()
-
-	_, err = destFile.ReadFrom(sourceFile)
-	if err != nil {
-		return err
-	}
-
-	sourceInfo, err := os.Stat(src)
-	if err != nil {
-		return err
-	}
-
-	return os.Chmod(dst, sourceInfo.Mode())
-}

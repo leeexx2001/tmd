@@ -2,6 +2,7 @@ package database
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -13,15 +14,6 @@ func CreateUser(db *sqlx.DB, usr *User) error {
 	_, err := db.NamedExec(stmt, usr)
 	if err != nil {
 		return fmt.Errorf("failed to create user %d (%s): %w", usr.Id, usr.ScreenName, err)
-	}
-	return nil
-}
-
-func DelUser(db *sqlx.DB, uid uint64) error {
-	stmt := `DELETE FROM users WHERE id=?`
-	_, err := db.Exec(stmt, uid)
-	if err != nil {
-		return fmt.Errorf("failed to delete user %d: %w", uid, err)
 	}
 	return nil
 }
@@ -112,4 +104,20 @@ func RecordUserPreviousName(db *sqlx.DB, uid uint64, name string, screenName str
 		return fmt.Errorf("failed to record previous name for user %d (%s -> %s): %w", uid, screenName, name, err)
 	}
 	return nil
+}
+
+func MarkUserInaccessible(db *sqlx.DB, uid uint64, screenName string) {
+	if uid > 0 {
+		if markErr := SetUserAccessible(db, uid, false); markErr != nil {
+			if !strings.Contains(markErr.Error(), "not found") {
+				log.Warnln("failed to mark user as inaccessible:", uid, markErr)
+			}
+		}
+	} else if screenName != "" {
+		if markErr := SetUserAccessibleByScreenName(db, screenName, false); markErr != nil {
+			if !strings.Contains(markErr.Error(), "not found") {
+				log.Warnln("failed to mark user as inaccessible by screen_name:", screenName, markErr)
+			}
+		}
+	}
 }

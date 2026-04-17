@@ -16,15 +16,6 @@ func CreateLst(db *sqlx.DB, lst *Lst) error {
 	return nil
 }
 
-func DelLst(db *sqlx.DB, lid uint64) error {
-	stmt := `DELETE FROM lsts WHERE id=?`
-	_, err := db.Exec(stmt, lid)
-	if err != nil {
-		return fmt.Errorf("failed to delete list %d: %w", lid, err)
-	}
-	return nil
-}
-
 func GetLst(db *sqlx.DB, lid uint64) (*Lst, error) {
 	stmt := `SELECT * FROM lsts WHERE id = ?`
 	result := &Lst{}

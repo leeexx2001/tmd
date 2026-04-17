@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.11.0] - 2026-04-15
+
+### Added
+
+#### 新增 CLAUDE.md - AI 编码准则
+
+用于减少常见 LLM 编码错误的行为准则文档，包含：
+- **编码前先思考** - 明确假设、呈现权衡、提出异议
+- **简单优先** - 只写最少代码，不做预设性扩展
+- **外科手术式修改** - 只改必须改的内容
+- **目标驱动执行** - 先定义成功标准，再循环推进
+
+### Changed
+
+#### 大规模代码精简与优化
+
+**核心原则：** 删除冗余代码，简化实现，遵循 "简单优先"
+
+| 模块 | 变化 | 行数变化 |
+|------|------|----------|
+| `internal/downloader/` | 删除冗余测试和未使用功能 | -353 行 |
+| `internal/downloading/` | 简化 JSON 下载、列表下载、批处理 | -260 行 |
+| `internal/profile/` | 精简下载器、获取器、存储层 | -175 行 |
+| `internal/twitter/` | 简化推文和用户处理 | -22 行 |
+| `internal/utils/` | 删除冗余工具函数 | -148 行 |
+| `internal/database/` | 精简测试和列表操作 | -54 行 |
+| `main.go` | 简化主逻辑 | -110 行 |
+
+**具体改进：**
+- 删除 `internal/downloading/user_download.go`（功能合并）
+- 简化 `json_download.go` - 减少 233 行，优化错误处理
+- 精简 `downloader_test.go` - 删除 296 行冗余测试
+- 优化 `file_writer.go` - 简化文件写入逻辑
+- 清理 `utils/fs.go` - 删除 26 行未使用函数
+- 移除 `utils/recovery.go` - 删除 34 行 panic 恢复代码
+
+### Stats
+
+- **29 个文件变更**
+- **+173 行 / -1146 行**
+- **净减少：973 行代码**
+- **新增文件：** 1 个（`CLAUDE.md`）
+- **删除文件：** 1 个（`internal/downloading/user_download.go`）
+
+---
+
 ## [2.10.0] - 2026-04-15
 
 ### Added

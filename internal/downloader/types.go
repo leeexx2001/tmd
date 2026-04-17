@@ -16,12 +16,10 @@ type DownloadRequest struct {
 }
 
 type DownloadOptions struct {
-	QueryParams      map[string]string
-	SkipUnchanged    bool
-	CreateVersion    bool
-	SetModTime       *time.Time
-	OnBeforeDownload func(req *DownloadRequest)
-	OnAfterDownload  func(result *DownloadResult)
+	QueryParams   map[string]string
+	SkipUnchanged bool
+	CreateVersion bool
+	SetModTime    *time.Time
 }
 
 type DownloadResult struct {
@@ -54,7 +52,6 @@ type WriteResult struct {
 
 type Downloader interface {
 	Download(req DownloadRequest) (*DownloadResult, error)
-	BatchDownload(ctx context.Context, reqs []DownloadRequest) ([]*DownloadResult, error)
 }
 
 type FileWriter interface {

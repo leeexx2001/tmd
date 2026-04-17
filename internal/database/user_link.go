@@ -16,15 +16,6 @@ func CreateUserLink(db *sqlx.DB, lnk *UserLink) error {
 	return handleInsertWithId(res, err, func(id int64) { lnk.Id.Scan(id) })
 }
 
-func DelUserLink(db *sqlx.DB, id int32) error {
-	stmt := `DELETE FROM user_links WHERE id = ?`
-	_, err := db.Exec(stmt, id)
-	if err != nil {
-		return fmt.Errorf("failed to delete user link %d: %w", id, err)
-	}
-	return nil
-}
-
 func GetUserLinks(db *sqlx.DB, uid uint64) ([]*UserLink, error) {
 	stmt := `SELECT * FROM user_links WHERE user_id = ?`
 	res := []*UserLink{}

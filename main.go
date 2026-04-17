@@ -40,13 +40,7 @@ func (u *userArgs) GetUser(ctx context.Context, client *resty.Client, db *sqlx.D
 	for _, id := range u.id {
 		usr, uid, err := twitter.GetUserById(ctx, client, id)
 		if err != nil {
-			if uid > 0 {
-				if markErr := database.SetUserAccessible(db, uid, false); markErr != nil {
-					if !strings.Contains(markErr.Error(), "not found") {
-						log.Warnln("failed to mark user as inaccessible:", uid, markErr)
-					}
-				}
-			}
+			database.MarkUserInaccessible(db, uid, "")
 			return nil, err
 		}
 		users = append(users, usr)
@@ -55,19 +49,7 @@ func (u *userArgs) GetUser(ctx context.Context, client *resty.Client, db *sqlx.D
 	for _, screenName := range u.screenName {
 		usr, uid, err := twitter.GetUserByScreenName(ctx, client, screenName)
 		if err != nil {
-			if uid > 0 {
-				if markErr := database.SetUserAccessible(db, uid, false); markErr != nil {
-					if !strings.Contains(markErr.Error(), "not found") {
-						log.Warnln("failed to mark user as inaccessible:", uid, markErr)
-					}
-				}
-			} else {
-				if markErr := database.SetUserAccessibleByScreenName(db, screenName, false); markErr != nil {
-					if !strings.Contains(markErr.Error(), "not found") {
-						log.Warnln("failed to mark user as inaccessible by screen_name:", screenName, markErr)
-					}
-				}
-			}
+			database.MarkUserInaccessible(db, uid, screenName)
 			return nil, err
 		}
 		users = append(users, usr)
@@ -92,7 +74,7 @@ func (u *userArgs) Set(str string) error {
 }
 
 func (u *userArgs) String() string {
-	return "string"
+	return fmt.Sprintf("ids=%v screenNames=%v", u.id, u.screenName)
 }
 
 type intArgs struct {
@@ -113,7 +95,7 @@ func (l *intArgs) Set(str string) error {
 }
 
 func (a *intArgs) String() string {
-	return "string array"
+	return fmt.Sprintf("%v", a.id)
 }
 
 type ListArgs struct {
@@ -133,7 +115,7 @@ func (j *jsonPathsArgs) Set(str string) error {
 }
 
 func (j *jsonPathsArgs) String() string {
-	return "json file paths"
+	return strings.Join(j.paths, ",")
 }
 
 func (j *jsonPathsArgs) GetPaths() []string {
@@ -419,7 +401,7 @@ func main() {
 
 	versionManager := downloader.NewVersionManagerWithWriter(".versions", nil)
 	fileWriter := downloader.NewFileWriter(versionManager)
-	versionManager = downloader.NewVersionManagerWithWriter(".versions", fileWriter)
+	versionManager.SetFileWriter(fileWriter)
 	dwn := downloader.NewDownloader(fileWriter)
 
 	var todump = make([]*downloading.TweetInEntity, 0)
@@ -519,6 +501,34 @@ func setClientLogger(client *resty.Client, out io.Writer) {
 	client.SetLogger(logger)
 }
 
+func appendListMemberRequests(ctx context.Context, client *resty.Client, db *sqlx.DB, lst twitter.ListBase, requests *[]profile.DownloadRequest) {
+	membersResult, err := lst.GetMembers(ctx, client)
+	if err != nil {
+		log.WithError(err).WithField("list", lst.Title()).Errorln("failed to get list members")
+		return
+	}
+
+	uids := utils.ExtractIDs(membersResult.Users, func(u *twitter.User) uint64 { return u.Id })
+	database.MarkListMembersAccessibleByIDs(db, uids)
+
+	for _, member := range membersResult.Users {
+		*requests = append(*requests, profile.DownloadRequest{
+			ScreenName:  member.ScreenName,
+			UserTitle:   member.Title(),
+			Name:        member.Name,
+			UserID:      member.Id,
+			AvatarURL:   member.AvatarURL,
+			BannerURL:   member.BannerURL,
+			Description: member.Description,
+			Location:    member.Location,
+			URL:         member.URL,
+			Verified:    member.Verified,
+			Protected:   member.IsProtected,
+			CreatedAt:   member.CreatedAt,
+		})
+	}
+}
+
 func handleProfileDownload(ctx context.Context, client *resty.Client, additional []*resty.Client, usersPath string, profileUsers userArgs, profileList ListArgs, task *Task, db *sqlx.DB, skipAPIFetch bool, dwn downloader.Downloader, fileWriter downloader.FileWriter, versionManager downloader.VersionManager) {
 	clients := make([]*resty.Client, 0)
 	clients = append(clients, client)
@@ -571,62 +581,14 @@ func handleProfileDownload(ctx context.Context, client *resty.Client, additional
 			log.WithError(err).Errorln("failed to get profile lists")
 		} else {
 			for _, lst := range lists {
-				membersResult, err := lst.GetMembers(ctx, client)
-				if err != nil {
-					log.WithError(err).WithField("list", lst.Title()).Errorln("failed to get list members")
-					continue
-				}
-
-				uids := utils.ExtractIDs(membersResult.Users, func(u *twitter.User) uint64 { return u.Id })
-				database.MarkListMembersAccessibleByIDs(db, uids)
-
-				for _, member := range membersResult.Users {
-					requests = append(requests, profile.DownloadRequest{
-						ScreenName:  member.ScreenName,
-						UserTitle:   member.Title(),
-						Name:        member.Name,
-						UserID:      member.Id,
-						AvatarURL:   member.AvatarURL,
-						BannerURL:   member.BannerURL,
-						Description: member.Description,
-						Location:    member.Location,
-						URL:         member.URL,
-						Verified:    member.Verified,
-						Protected:   member.IsProtected,
-						CreatedAt:   member.CreatedAt,
-					})
-				}
+				appendListMemberRequests(ctx, client, db, lst, &requests)
 			}
 		}
 	}
 
 	if len(task.lists) > 0 {
 		for _, lst := range task.lists {
-			membersResult, err := lst.GetMembers(ctx, client)
-			if err != nil {
-				log.WithError(err).WithField("list", lst.Title()).Errorln("failed to get list members for profile")
-				continue
-			}
-
-			uids := utils.ExtractIDs(membersResult.Users, func(u *twitter.User) uint64 { return u.Id })
-			database.MarkListMembersAccessibleByIDs(db, uids)
-
-			for _, member := range membersResult.Users {
-				requests = append(requests, profile.DownloadRequest{
-					ScreenName:  member.ScreenName,
-					UserTitle:   member.Title(),
-					Name:        member.Name,
-					UserID:      member.Id,
-					AvatarURL:   member.AvatarURL,
-					BannerURL:   member.BannerURL,
-					Description: member.Description,
-					Location:    member.Location,
-					URL:         member.URL,
-					Verified:    member.Verified,
-					Protected:   member.IsProtected,
-					CreatedAt:   member.CreatedAt,
-				})
-			}
+			appendListMemberRequests(ctx, client, db, lst, &requests)
 		}
 	}
 

@@ -15,6 +15,7 @@ import (
 	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/naming"
 	"github.com/unkmonster/tmd/internal/twitter"
+	"github.com/unkmonster/tmd/internal/utils"
 )
 
 type RawTweetEntry struct {
@@ -22,52 +23,18 @@ type RawTweetEntry struct {
 	CreatedAt string `json:"created_at"`
 	FullText  string `json:"full_text"`
 	Media     []struct {
-		Type      string `json:"type"`
-		URL       string `json:"url"`
-		Thumbnail string `json:"thumbnail"`
-		Original  string `json:"original"`
+		Type     string `json:"type"`
+		URL      string `json:"url"`
+		Original string `json:"original"`
 	} `json:"media"`
-	ScreenName      string `json:"screen_name"`
-	Name            string `json:"name"`
-	ProfileImageURL string `json:"profile_image_url"`
-	UserId          string `json:"user_id"`
-	Metadata        any    `json:"metadata"`
-	OriginalJSON    []byte `json:"-"`
+	ScreenName   string `json:"screen_name"`
+	Name         string `json:"name"`
+	UserId       string `json:"user_id"`
+	OriginalJSON []byte `json:"-"`
 }
 
 type RawTweetFile struct {
 	Entries []RawTweetEntry `json:"-"`
-	Raw     []byte          `json:"-"`
-}
-
-func ParseRawJsonFile(path string) (*RawTweetFile, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var entries []RawTweetEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		var singleEntry RawTweetEntry
-		if err2 := json.Unmarshal(data, &singleEntry); err2 == nil {
-			if singleEntry.Id != "" {
-				singleEntry.OriginalJSON = data
-				entries = []RawTweetEntry{singleEntry}
-			} else {
-				return nil, fmt.Errorf("invalid raw JSON format: neither array nor single tweet")
-			}
-		} else {
-			return nil, fmt.Errorf("failed to parse JSON: %v (single: %v)", err, err2)
-		}
-	} else {
-		for i := range entries {
-			if entryJSON, err := json.Marshal(entries[i]); err == nil {
-				entries[i].OriginalJSON = entryJSON
-			}
-		}
-	}
-
-	return &RawTweetFile{Entries: entries, Raw: data}, nil
 }
 
 func (f *RawTweetFile) GetTweets() ([]*twitter.Tweet, error) {
@@ -144,21 +111,6 @@ type FormattedTweetEntry = map[string]any
 
 type FormattedJsonFile struct {
 	Entries []FormattedTweetEntry `json:"-"`
-	Raw     []byte                `json:"-"`
-}
-
-func ParseFormattedJsonFile(path string) (*FormattedJsonFile, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var entry FormattedTweetEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
-		return nil, fmt.Errorf("failed to parse formatted JSON: %v", err)
-	}
-
-	return &FormattedJsonFile{Entries: []FormattedTweetEntry{entry}, Raw: data}, nil
 }
 
 func (f *FormattedJsonFile) GetTweets() ([]*twitter.Tweet, error) {
@@ -252,10 +204,7 @@ func parseFormattedEntry(entry *FormattedTweetEntry) (*twitter.Tweet, error) {
 					tweet.Creator.Name = getStringFromMap(legacy, "name")
 					tweet.Creator.ScreenName = getStringFromMap(legacy, "screen_name")
 					if avatar := getStringFromMap(legacy, "profile_image_url_https"); avatar != "" {
-						avatar = strings.Replace(avatar, "_normal", "", 1)
-						avatar = strings.Replace(avatar, "_bigger", "", 1)
-						avatar = strings.Replace(avatar, "_mini", "", 1)
-						tweet.Creator.AvatarURL = avatar
+						tweet.Creator.AvatarURL = utils.StripAvatarSuffix(avatar)
 					}
 				}
 			}
@@ -341,34 +290,44 @@ type JsonEntry interface {
 }
 
 func readJsonEntries(path string) ([]JsonEntry, error) {
-	entries := make([]JsonEntry, 0)
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
 
-	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		files, err := os.ReadDir(path)
-		if err != nil {
-			return nil, err
-		}
-		for _, f := range files {
-			if f.IsDir() {
-				subEntries, err := readJsonEntries(filepath.Join(path, f.Name()))
-				if err != nil {
-					continue
-				}
-				entries = append(entries, subEntries...)
-				continue
-			}
-			if !strings.HasSuffix(f.Name(), ".json") {
-				continue
-			}
-			subEntries, err := readJsonEntries(filepath.Join(path, f.Name()))
+	if !info.IsDir() {
+		return readJsonEntryFile(path)
+	}
+
+	files, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]JsonEntry, 0)
+	for _, f := range files {
+		fullPath := filepath.Join(path, f.Name())
+		if f.IsDir() {
+			subEntries, err := readJsonEntries(fullPath)
 			if err != nil {
 				continue
 			}
 			entries = append(entries, subEntries...)
+			continue
 		}
-		return entries, nil
+		if !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+		subEntries, err := readJsonEntryFile(fullPath)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, subEntries...)
 	}
+	return entries, nil
+}
 
+func readJsonEntryFile(path string) ([]JsonEntry, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -381,48 +340,23 @@ func readJsonEntries(path string) ([]JsonEntry, error) {
 				rawEntries[i].OriginalJSON = entryJSON
 			}
 		}
-		rtf := &RawTweetFile{Entries: rawEntries, Raw: data}
-		entries = append(entries, rtf)
-		return entries, nil
+		return []JsonEntry{&RawTweetFile{Entries: rawEntries}}, nil
 	}
 
 	var singleRaw RawTweetEntry
 	if err := json.Unmarshal(data, &singleRaw); err == nil && singleRaw.Id != "" {
 		singleRaw.OriginalJSON = data
-		rtf := &RawTweetFile{Entries: []RawTweetEntry{singleRaw}, Raw: data}
-		entries = append(entries, rtf)
-		return entries, nil
+		return []JsonEntry{&RawTweetFile{Entries: []RawTweetEntry{singleRaw}}}, nil
 	}
 
 	var formatted FormattedTweetEntry
 	if err := json.Unmarshal(data, &formatted); err == nil {
 		if _, hasRestId := formatted["rest_id"]; hasRestId {
-			entries = append(entries, &FormattedJsonFile{Entries: []FormattedTweetEntry{formatted}, Raw: data})
-			return entries, nil
+			return []JsonEntry{&FormattedJsonFile{Entries: []FormattedTweetEntry{formatted}}}, nil
 		}
 	}
 
 	return nil, fmt.Errorf("unrecognized JSON format in file: %s", path)
-}
-
-func BatchDownloadFromJson(ctx context.Context, client *resty.Client, dir string, dwn downloader.Downloader, fileWriter downloader.FileWriter, jsonPaths []string) []PackagedTweet {
-	pts, err := DownloadFromJsonFiles(ctx, client, dir, jsonPaths)
-	if err != nil {
-		log.Errorln("failed to parse JSON files:", err)
-		return nil
-	}
-
-	packged := make([]PackagedTweet, 0, len(pts))
-	for _, pt := range pts {
-		packged = append(packged, pt)
-	}
-
-	errors := BatchDownloadTweet(ctx, client, false, dwn, fileWriter, packged...)
-	if len(errors) > 0 {
-		log.Warnf("%d tweets failed to download", len(errors))
-	}
-
-	return errors
 }
 
 type JsonDownloadResult struct {
@@ -460,52 +394,39 @@ func DownloadJsonDir(ctx context.Context, client *resty.Client, baseDir string, 
 					mu.Unlock()
 					continue
 				}
-				if !strings.HasSuffix(entry.Name(), ".json") && !isJsonArchive(entry.Name()) {
+				if !strings.HasSuffix(entry.Name(), ".json") {
 					continue
 				}
-				wg.Add(1)
-				go func(path string) {
-					defer wg.Done()
-					start := time.Now()
-					result := JsonDownloadResult{Path: path}
-					tweetCount, err := downloadSingleJsonFile(ctx, client, baseDir, path, dwn, fileWriter)
-					result.TweetCount = tweetCount
-					if err != nil {
-						result.Success = false
-						result.Error = err.Error()
-					} else {
-						result.Success = true
-					}
-					result.Duration = time.Since(start)
-					mu.Lock()
-					results = append(results, result)
-					mu.Unlock()
-				}(fullPath)
+				downloadJsonFileAsync(ctx, client, baseDir, fullPath, dwn, fileWriter, &results, &mu, &wg)
 			}
 		} else {
-			wg.Add(1)
-			go func(path string) {
-				defer wg.Done()
-				start := time.Now()
-				result := JsonDownloadResult{Path: path}
-				tweetCount, err := downloadSingleJsonFile(ctx, client, baseDir, path, dwn, fileWriter)
-				result.TweetCount = tweetCount
-				if err != nil {
-					result.Success = false
-					result.Error = err.Error()
-				} else {
-					result.Success = true
-				}
-				result.Duration = time.Since(start)
-				mu.Lock()
-				results = append(results, result)
-				mu.Unlock()
-			}(jsonPath)
+			downloadJsonFileAsync(ctx, client, baseDir, jsonPath, dwn, fileWriter, &results, &mu, &wg)
 		}
 	}
 
 	wg.Wait()
 	return results
+}
+
+func downloadJsonFileAsync(ctx context.Context, client *resty.Client, baseDir, jsonPath string, dwn downloader.Downloader, fileWriter downloader.FileWriter, results *[]JsonDownloadResult, mu *sync.Mutex, wg *sync.WaitGroup) {
+	wg.Add(1)
+	go func(path string) {
+		defer wg.Done()
+		start := time.Now()
+		result := JsonDownloadResult{Path: path}
+		tweetCount, err := downloadSingleJsonFile(ctx, client, baseDir, path, dwn, fileWriter)
+		result.TweetCount = tweetCount
+		if err != nil {
+			result.Success = false
+			result.Error = err.Error()
+		} else {
+			result.Success = true
+		}
+		result.Duration = time.Since(start)
+		mu.Lock()
+		*results = append(*results, result)
+		mu.Unlock()
+	}(jsonPath)
 }
 
 func downloadSingleJsonFile(ctx context.Context, client *resty.Client, baseDir string, jsonPath string, dwn downloader.Downloader, fileWriter downloader.FileWriter) (int, error) {
@@ -514,23 +435,15 @@ func downloadSingleJsonFile(ctx context.Context, client *resty.Client, baseDir s
 		return 0, err
 	}
 
-	packged := make([]PackagedTweet, 0, len(pts))
-	for _, pt := range pts {
-		packged = append(packged, pt)
+	tweetCount := len(pts)
+	packged := make([]PackagedTweet, len(pts))
+	for i, pt := range pts {
+		packged[i] = pt
 	}
-
-	tweetCount := len(packged)
-	errors := BatchDownloadTweet(ctx, client, false, dwn, fileWriter, packged...)
-	if len(errors) > 0 {
-		return tweetCount, fmt.Errorf("%d tweets failed to download", len(errors))
+	failedTweets := BatchDownloadTweet(ctx, client, false, dwn, fileWriter, packged...)
+	if len(failedTweets) > 0 {
+		return tweetCount, fmt.Errorf("%d tweets failed to download", len(failedTweets))
 	}
 
 	return tweetCount, nil
-}
-
-func isJsonArchive(name string) bool {
-	return strings.HasSuffix(name, ".json.zip") ||
-		strings.HasSuffix(name, ".json.gz") ||
-		strings.HasSuffix(name, ".json.tar") ||
-		strings.HasSuffix(name, ".json.tar.gz")
 }

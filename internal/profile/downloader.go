@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -49,7 +48,7 @@ type ProfileDownloader struct {
 	fileWriter downloader.FileWriter
 }
 
-func NewProfileDownloader(config *Config, storage *FileStorageManager, fetcher Fetcher, dwn downloader.Downloader, fw downloader.FileWriter) *ProfileDownloader {
+func validateAndDefaultConfig(config *Config, storage *FileStorageManager, dwn downloader.Downloader, fw downloader.FileWriter) *Config {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -62,32 +61,12 @@ func NewProfileDownloader(config *Config, storage *FileStorageManager, fetcher F
 	if fw == nil {
 		panic("profile: fileWriter cannot be nil")
 	}
-
-	return &ProfileDownloader{
-		config:     config,
-		storage:    storage,
-		fetcher:    fetcher,
-		downloader: dwn,
-		fileWriter: fw,
-	}
+	return config
 }
 
 func NewProfileDownloaderWithClients(config *Config, storage *FileStorageManager, clients []*resty.Client, dwn downloader.Downloader, fw downloader.FileWriter) *ProfileDownloader {
-	if config == nil {
-		config = DefaultConfig()
-	}
-	if storage == nil {
-		panic("profile: storage cannot be nil")
-	}
-	if dwn == nil {
-		panic("profile: downloader cannot be nil")
-	}
-	if fw == nil {
-		panic("profile: fileWriter cannot be nil")
-	}
-
+	config = validateAndDefaultConfig(config, storage, dwn, fw)
 	fetcher := NewTwitterFetcherWithClients(clients)
-
 	return &ProfileDownloader{
 		config:     config,
 		storage:    storage,
@@ -98,21 +77,8 @@ func NewProfileDownloaderWithClients(config *Config, storage *FileStorageManager
 }
 
 func NewProfileDownloaderWithDB(config *Config, storage *FileStorageManager, clients []*resty.Client, db *sqlx.DB, dwn downloader.Downloader, fw downloader.FileWriter) *ProfileDownloader {
-	if config == nil {
-		config = DefaultConfig()
-	}
-	if storage == nil {
-		panic("profile: storage cannot be nil")
-	}
-	if dwn == nil {
-		panic("profile: downloader cannot be nil")
-	}
-	if fw == nil {
-		panic("profile: fileWriter cannot be nil")
-	}
-
+	config = validateAndDefaultConfig(config, storage, dwn, fw)
 	fetcher := NewTwitterFetcherWithClients(clients)
-
 	return &ProfileDownloader{
 		config:     config,
 		storage:    storage,
@@ -161,14 +127,8 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 		profile, err = pd.fetcher.FetchProfile(ctx, req.ScreenName)
 		if err != nil {
 			result.Error = fmt.Errorf("failed to fetch profile: %w", err)
-			// 标记不可访问用户（如果存在于数据库中）
 			if pd.db != nil {
-				if markErr := database.SetUserAccessibleByScreenName(pd.db, req.ScreenName, false); markErr != nil {
-					// 用户不存在时不记录警告（预期行为）
-					if !strings.Contains(markErr.Error(), "not found") {
-						log.Warnln("failed to mark user as inaccessible by screen_name:", req.ScreenName, markErr)
-					}
-				}
+				database.MarkUserInaccessible(pd.db, 0, req.ScreenName)
 			}
 			return result, result.Error
 		}
@@ -220,8 +180,7 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 	fetchedAt := time.Now()
 
 	if profile.AvatarURL != "" {
-		avatarURL := GetHighResAvatarURL(profile.AvatarURL, pd.config.AvatarQuality)
-		avatarResult := pd.downloadAvatar(ctx, userTitle, req.ScreenName, avatarURL, fetchedAt)
+		avatarResult := pd.downloadAvatar(ctx, userTitle, req.ScreenName, profile.AvatarURL, fetchedAt)
 		result.Files = append(result.Files, avatarResult)
 	}
 

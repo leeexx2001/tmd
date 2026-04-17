@@ -19,10 +19,6 @@ type TwitterFetcher struct {
 
 var reNormalAvatarURL = regexp.MustCompile(`_normal(\.[a-zA-Z]+)$`)
 
-func NewTwitterFetcher(client *resty.Client) *TwitterFetcher {
-	return &TwitterFetcher{clients: []*resty.Client{client}}
-}
-
 func NewTwitterFetcherWithClients(clients []*resty.Client) *TwitterFetcher {
 	if len(clients) == 0 {
 		panic("clients cannot be empty")
@@ -80,73 +76,6 @@ func (tf *TwitterFetcher) handleClientError(client *resty.Client, err error) {
 			twitter.SetClientError(client, apiErr)
 		}
 	}
-}
-
-func (tf *TwitterFetcher) FetchAvatar(ctx context.Context, url string) ([]byte, error) {
-	if url == "" {
-		return nil, fmt.Errorf("avatar URL is empty")
-	}
-
-	client := tf.selectAvailableClient(ctx)
-	if client == nil {
-		return nil, fmt.Errorf("no available client for avatar fetch")
-	}
-
-	resp, err := client.R().SetContext(ctx).Get(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch avatar: %w", err)
-	}
-
-	if resp.StatusCode() >= 400 {
-		return nil, fmt.Errorf("avatar fetch failed with status %d, content-length: %d", resp.StatusCode(), len(resp.Body()))
-	}
-
-	return resp.Body(), nil
-}
-
-func (tf *TwitterFetcher) FetchBanner(ctx context.Context, url string) ([]byte, string, error) {
-	if url == "" {
-		return nil, "", fmt.Errorf("banner URL is empty")
-	}
-
-	client := tf.selectAvailableClient(ctx)
-	if client == nil {
-		return nil, "", fmt.Errorf("no available client for banner fetch")
-	}
-
-	resp, err := client.R().SetContext(ctx).Get(url)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to fetch banner: %w", err)
-	}
-
-	if resp.StatusCode() >= 400 {
-		return nil, "", fmt.Errorf("banner fetch failed with status %d, content-length: %d", resp.StatusCode(), len(resp.Body()))
-	}
-
-	ext := ".jpg"
-	contentType := resp.Header().Get("Content-Type")
-	switch contentType {
-	case "image/png":
-		ext = ".png"
-	case "image/webp":
-		ext = ".webp"
-	case "image/gif":
-		ext = ".gif"
-	}
-
-	return resp.Body(), ext, nil
-}
-
-func (tf *TwitterFetcher) selectAvailableClient(ctx context.Context) *resty.Client {
-	for _, client := range tf.clients {
-		if ctx.Err() != nil {
-			return nil
-		}
-		if twitter.GetClientError(client) == nil {
-			return client
-		}
-	}
-	return nil
 }
 
 func (tf *TwitterFetcher) Client() *resty.Client {

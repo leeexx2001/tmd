@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/unkmonster/tmd/internal/downloader"
 )
@@ -69,25 +68,5 @@ func (fsm *FileStorageManager) GetFilePathWithExt(userTitle string, fileType Fil
 		return filepath.Join(profilePath, filename)
 	default:
 		return fsm.GetFilePath(userTitle, fileType)
-	}
-}
-
-func (fsm *FileStorageManager) GetVersionPathWithExt(userTitle string, fileType FileType, timestamp time.Time, ext string) string {
-	profilePath := fsm.getUserProfilePath(userTitle)
-	versionsDir := filepath.Join(profilePath, versionsDirName)
-
-	timestampStr := timestamp.Format("20060102_150405")
-
-	switch fileType {
-	case FileTypeAvatar:
-		return filepath.Join(versionsDir, fmt.Sprintf("avatar_%s%s", timestampStr, ext))
-	case FileTypeBanner:
-		return filepath.Join(versionsDir, fmt.Sprintf("banner_%s%s", timestampStr, ext))
-	case FileTypeDescription:
-		return filepath.Join(versionsDir, fmt.Sprintf("description_%s%s", timestampStr, ext))
-	case FileTypeProfile:
-		return filepath.Join(versionsDir, fmt.Sprintf("profile_%s%s", timestampStr, ext))
-	default:
-		return filepath.Join(versionsDir, fmt.Sprintf("%s_%s%s", fileType, timestampStr, ext))
 	}
 }
