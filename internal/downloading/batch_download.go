@@ -81,16 +81,16 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 
 	start := time.Now()
 
-	// 统计未关注的用户
-	var unfollowedUsers []*twitter.User
+	// 统计未关注且受保护的账户（无法下载内容的用户）
+	var protectedUnfollowedUsers []*twitter.User
 	for _, u := range users {
-		if u.user.Followstate == twitter.FS_UNFOLLOW {
-			unfollowedUsers = append(unfollowedUsers, u.user)
+		if u.user.IsProtected && u.user.Followstate == twitter.FS_UNFOLLOW {
+			protectedUnfollowedUsers = append(protectedUnfollowedUsers, u.user)
 		}
 	}
-	if len(unfollowedUsers) > 0 {
-		log.Infof("未关注的用户 (%d):", len(unfollowedUsers))
-		for _, u := range unfollowedUsers {
+	if len(protectedUnfollowedUsers) > 0 {
+		log.Infof("未关注且受保护的账户 (%d，无法下载内容):", len(protectedUnfollowedUsers))
+		for _, u := range protectedUnfollowedUsers {
 			log.Infof("  - %s(@%s)", u.Name, u.ScreenName)
 		}
 	}
