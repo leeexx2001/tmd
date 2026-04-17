@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.12.0] - 2026-04-15
+
+### Added
+
+#### 新增部分失败推文重试功能
+
+支持部分媒体下载失败的推文进入重试队列，而不是全部重新下载：
+
+| 文件 | 变更 |
+|------|------|
+| `internal/downloading/tweet_download.go` | `downloadTweetMedia()` 函数增强 |
+| `internal/downloading/retry.go` | `RetryFailedTweets()` 函数增强 |
+
+**核心改进：**
+
+1. **智能 URL 跟踪**
+   - 收集下载失败的 URL (`failedUrls`)
+   - 收集下载成功的 URL (`successUrls`)
+   - 更新 `tweet.Urls` 只保留失败的 URL
+
+2. **部分失败处理**
+   - 只要有失败的 URL，就返回错误让推文进入重试队列
+   - 重试时只下载失败的媒体，不重复下载已成功的
+
+3. **增强日志输出**
+   - 显示下载进度：`[成功数/总数]`
+   - 重试时显示：`retrying N tweets with M total media(s)`
+   - 成功时显示：`tweet X all media downloaded successfully on retry`
+   - 失败时显示：`tweet X still has N media(s) to download`
+
+4. **空队列优化**
+   - 如果没有需要重试的推文，直接返回并清空队列
+
+### Changed
+
+#### 文档更新
+
+- `CLAUDE.md` - 更新 AI 编码准则
+- `.gitignore` - 更新忽略规则
+
+---
+
+## [2.11.2] - 2026-04-15
+
+### Changed
+
+#### 优化未关注用户统计逻辑
+
+| 文件 | 变更 |
+|------|------|
+| `internal/downloading/batch_download.go` | 优化未关注用户统计逻辑 |
+
+**改进：**
+- 只显示未关注且受保护的账户（这些账户无法下载内容）
+- 未关注但公开的账户可以正常下载，不再显示警告
+- 日志信息更新为："未关注且受保护的账户 (N，无法下载内容)"
+
+---
+
 ## [2.11.1] - 2026-04-15
 
 ### Added

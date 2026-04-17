@@ -1,0 +1,5 @@
+.vscode
+*.exe
+bin
+*.prof
+todo.md

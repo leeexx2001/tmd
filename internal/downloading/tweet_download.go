@@ -230,6 +230,11 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		saveLoongTweet(cfg, dir, tweet, tweetNaming)
 	}
 
+	// 用于收集仍然失败的URL
+	failedUrls := make([]string, 0)
+	// 用于收集成功的URL（用于日志）
+	successUrls := make([]string, 0)
+
 	for _, u := range tweet.Urls {
 		ext, err := utils.GetExtFromUrl(u)
 		if err != nil {
@@ -245,6 +250,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		path, err := tweetNaming.FilePath(dir, ext)
 		if err != nil {
 			mediaMutex.Unlock()
+			failedUrls = append(failedUrls, u)
 			continue
 		}
 		mediaMutex.Unlock()
@@ -263,15 +269,30 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		result, err := cfg.downloader.Download(req)
 		if err != nil {
 			log.Warnln("failed to download media:", u, "-", err)
+			failedUrls = append(failedUrls, u)
 			continue
 		}
 		if !result.Success {
 			log.Warnln("media download reported failure:", u, "-", result.Error)
+			failedUrls = append(failedUrls, u)
 			continue
 		}
+		successUrls = append(successUrls, u)
 	}
 
-	fmt.Printf("%s\n", color.FgLightMagenta.Render(tweetNaming.LogFormat()))
+	// 更新 tweet.Urls：只保留失败的URL
+	tweet.Urls = failedUrls
+
+	fmt.Printf("%s", color.FgLightMagenta.Render(tweetNaming.LogFormat()))
+	if len(successUrls) > 0 && len(failedUrls) > 0 {
+		fmt.Printf(" [%d/%d succeeded]", len(successUrls), len(successUrls)+len(failedUrls))
+	}
+	fmt.Println()
+
+	// 只要有失败的URL，就返回错误，让推文进入重试队列
+	if len(failedUrls) > 0 {
+		return fmt.Errorf("%d media(s) failed to download", len(failedUrls))
+	}
 	return nil
 }
 

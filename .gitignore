@@ -64,8 +64,8 @@ Desktop.ini
 
 # === Project Specific ===
 # 旧版本备份
-tmd-2.4.4/
-tmd-*/
+# tmd-2.4.4/
+# tmd-*/
 
 # 示例数据
 json示例/
