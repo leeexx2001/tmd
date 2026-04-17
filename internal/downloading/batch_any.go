@@ -43,6 +43,5 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 	}
 
 	log.Debugln("collected users:", len(packgedUsers))
-	effectiveAutoFollow := autoFollow || len(lists) > 0
-	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, effectiveAutoFollow, additional, dwn, fileWriter)
+	return BatchUserDownload(ctx, client, db, packgedUsers, realDir, autoFollow, additional, dwn, fileWriter)
 }

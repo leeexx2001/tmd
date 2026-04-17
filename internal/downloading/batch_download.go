@@ -81,6 +81,20 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 
 	start := time.Now()
 
+	// 统计未关注的用户
+	var unfollowedUsers []*twitter.User
+	for _, u := range users {
+		if u.user.Followstate == twitter.FS_UNFOLLOW {
+			unfollowedUsers = append(unfollowedUsers, u.user)
+		}
+	}
+	if len(unfollowedUsers) > 0 {
+		log.Infof("未关注的用户 (%d):", len(unfollowedUsers))
+		for _, u := range unfollowedUsers {
+			log.Infof("  - %s(@%s)", u.Name, u.ScreenName)
+		}
+	}
+
 	func() {
 		defer panicHandler()
 		log.Infoln("start pre processing users")

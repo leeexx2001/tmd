@@ -4,6 +4,7 @@
 
 ## 目录
 
+- [项目架构](#项目架构)
 - [功能特性](#功能特性)
 - [安装与配置](#安装与配置)
 - [命令行参数详解](#命令行参数详解)
@@ -28,36 +29,39 @@
            │
 ┌──────────▼──────────────────────────────────────────────────┐
 │  internal/config (配置层)                                    │
-│  - config.go: 配置结构、读写、Cookie 管理                     │
+│  - config.go: 配置结构、读写、Cookie 管理、附加 Cookie 加载   │
 └──────────┬──────────────────────────────────────────────────┘
            │
-┌──────────▼──────────────────┐  ┌─────────────────────────────▼┐
-│  internal/twitter          │  │  internal/database          │
+┌──────────▼──────────────────┐  ┌────────────────────────────▼┐
+│  internal/twitter           │  │  internal/database          │
 │  (API 客户端层)              │  │  (数据持久化层)               │
-│                            │  │                             │
-│  - api.go: REST API 封装    │  │  - schema.go: 建表与迁移      │
-│  - client.go: 客户端管理     │  │  - user.go: 用户 CRUD        │
-│  - user.go/tweet.go/        │  │  - lst.go: 列表 CRUD         │
-│    timeline.go/list.go:     │  │  - user_entity.go/lst_       │
-│    各端点接口                │  │    entity.go/user_link.go   │
-│  - batch_login.go: 多账号   │  │  - user_sync.go: 用户同步     │
-│    批量登录                  │  │  - helpers.go: 通用查询封装   │
-│  - errors.go: 错误类型       │  └─────────────┬───────────────┘
-└──────────┬──────────────────┘                │
-           │                                 │
-┌──────────▼──────────────────────────────────┴───────────────┐
+│                             │  │                             │
+│  - api.go: REST API 封装     │  │  - connect.go: 数据库连接    │
+│  - client.go: 客户端管理     │  │  - schema.go: 建表与迁移     │
+│  - user.go: 用户接口         │  │  - model.go: 数据模型        │
+│  - tweet.go: 推文接口        │  │  - helpers.go: 通用查询封装  │
+│  - timeline.go: 时间线接口   │  │  - user.go: 用户 CRUD +      │
+│  - list.go: 列表接口         │  │    MarkUserInaccessible     │
+│  - batch_login.go: 多账号   │  │  - user_entity.go: 用户实体  │
+│    批量登录                  │  │  - lst_entity.go: 列表实体   │
+│  - errors.go: 错误类型       │  │  - user_sync.go: 用户同步    │
+│                             │  │  - user_link.go: 用户链接    │
+└──────────┬──────────────────┘  └─────────────┬───────────────┘
+           │                                    │
+┌──────────▼────────────────────────────────────┴─────────────┐
 │  internal/downloading (业务层 - 推文下载)                    │
-│                                                            │
-│  - types.go: PackagedTweet 接口与全局状态                   │
-│  - tweet_download.go: 单推文下载与 JSON 保存                 │
-│  - user_download.go: 用户时间线下载                          │
-│  - user_sync.go: 用户信息同步                                │
-│  - list_download.go: 列表成员下载                            │
-│  - batch_download.go: 批量用户下载                           │
-│  - batch_any.go: 统一入口                                   │
+│                                                             │
+│  - types.go: PackagedTweet 接口与全局状态                    │
+│  - tweet_download.go: 单推文下载与 JSON/TXT 保存             │
+│  - user_sync.go: 用户信息同步与时间线下载                    │
+│  - list_sync.go: 列表成员获取与同步                          │
+│  - batch_download.go: 批量用户下载（优先级队列+并发池）       │
+│  - batch_any.go: 统一入口 (BatchDownloadAny)                │
 │  - json_download.go: JSON 文件批量下载                       │
 │  - mark_downloaded.go: 标记已下载                            │
 │  - retry.go: 失败重试                                       │
+│  - dumper.go: 失败推文持久化                                 │
+│  - entity.go: TweetInEntity 封装                            │
 └──────────┬──────────────────────────────────────────────────┘
            │
 ┌──────────▼──────────────────────────────────────────────────┐
@@ -65,26 +69,37 @@
 │  - fetcher.go: Twitter API 获取（复用 twitter 包）           │
 │  - downloader.go: Profile 下载调度                           │
 │  - storage.go: 文件存储与版本管理                            │
-│  - types.go: ProfileInfo 等类型定义                          │
+│  - types.go: ProfileInfo / DownloadRequest 等类型定义        │
 └──────────┬──────────────────────────────────────────────────┘
            │
 ┌──────────▼──────────────────────────────────────────────────┐
 │  internal/entity (数据实体层)                                │
-│  - interface.go: Entity 接口定义                             │
-│  - user.go / list.go / sync.go: 具体实体实现                 │
+│  - interface.go: Entity 接口定义 (Create/Remove/Rename/...)  │
+│  - user.go: UserEntity 实现                                 │
+│  - list.go: ListEntity 实现                                 │
+│  - sync.go: Sync 通用同步逻辑                               │
 ├─────────────────────────────────────────────────────────────┤
 │  internal/downloader (基础设施层 - 通用下载)                 │
-│  - downloader.go: HTTP 下载、批量下载                        │
-│  - file_writer.go: 原子写入、MD5 去重                        │
+│  - downloader.go: HTTP 下载、批量下载、回调机制              │
+│  - file_writer.go: 原子写入、MD5 去重、并发锁管理            │
 │  - version_manager.go: 版本备份管理                          │
-│  - types.go: 接口定义                                       │
+│  - helpers.go: 辅助函数                                     │
+│  - types.go: Downloader/FileWriter/VersionManager 接口       │
 ├─────────────────────────────────────────────────────────────┤
 │  internal/naming (命名服务)                                  │
-│  - naming.go: TweetNaming / UserNaming                      │
+│  - base.go: 基础命名结构                                    │
+│  - tweet_naming.go: TweetNaming (推文文件命名)               │
+│  - user_naming.go: UserNaming (用户目录命名)                 │
+│  - list_naming.go: ListNaming (列表目录命名)                 │
 ├─────────────────────────────────────────────────────────────┤
 │  internal/utils (工具层)                                     │
-│  - fs.go / http.go / time_range.go / algo.go / recovery.go  │
-│  - user.go / stub.go / win32.go                             │
+│  - fs.go: 文件路径工具 (去重、唯一路径、扩展名)              │
+│  - http.go: URL 处理、头像后缀清理                           │
+│  - algo.go: 泛型堆、切片洗牌                                │
+│  - time_range.go: 时间范围类型                               │
+│  - user.go: 泛型 ID 提取                                    │
+│  - recovery.go: panic 恢复                                  │
+│  - win32.go / stub.go: 控制台标题 (跨平台)                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -93,11 +108,12 @@
 | 原则 | 实现 |
 |------|------|
 | **分层解耦** | 应用层 → 配置层 → API层/数据层 → 业务层 → 基础设施层 |
-| **依赖注入** | `downloader.Downloader` 接口注入到业务层 |
+| **依赖注入** | `downloader.Downloader` 接口注入到业务层，构造函数支持多客户端 |
 | **单一职责** | 每个包职责明确，配置/下载/命名/存储/数据分离 |
-| **接口隔离** | 小接口设计（Entity, Downloader, FileWriter, VersionManager） |
-| **逻辑复用** | `database.SyncUser()` 统一用户同步，`twitter.GetUserByScreenName()` 复用 API 调用 |
-| **并发安全** | 使用 `sync.Mutex`、`sync.Map` 和 `context.Context` |
+| **接口隔离** | 小接口设计（Entity, Downloader, FileWriter, VersionManager, PackagedTweet） |
+| **逻辑复用** | `database.SyncUser()` 统一用户同步，`database.MarkUserInaccessible()` 统一标记逻辑 |
+| **并发安全** | `sync.Mutex`/`sync.Map`/`atomic`/`context.Context`，协程池 (`ants`) 控制并发 |
+| **增量下载** | 基于 `latest_release_time` 的增量拉取，避免重复下载 |
 
 ---
 
@@ -126,8 +142,10 @@
 - 速率限制：避免触发 Twitter API 速率限制
 - 自动关注受保护的用户
 - 添加备用 cookie：提高推文获取速度和总数量
-- **Profile 下载**：下载用户头像、横幅、简介等个人资料
+- **Profile 下载**：下载用户头像、横幅、简介等个人资料，支持版本管理
 - **推文 JSON 保存**：保存推文完整信息为 JSON/TXT 格式
+- **JSON 文件导入**：从其他工具导出的 JSON 文件批量下载媒体
+- **标记已下载**：标记用户为已下载状态，跳过历史推文
 
 ---
 
@@ -161,6 +179,7 @@ tmd -conf
 | auth_token | Twitter Cookie 中的 auth_token | `a1b2c3d4e5f6...` |
 | ct0 | Twitter Cookie 中的 ct0 | `x1y2z3...` |
 | max download routine | 最大并发下载数（0为默认值） | `20` |
+| max file name len | 最大文件名长度（50-250，默认155） | `155` |
 
 ### 配置文件位置
 
@@ -214,7 +233,7 @@ tmd -conf
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `-auto-follow` | bool | false | 自动向受保护用户发送关注请求 |
+| `-auto-follow` | bool | false | 自动向受保护用户发送关注请求（列表下载时默认启用） |
 | `-no-retry` | bool | false | 快速退出，不重试失败的推文 |
 
 ### 标记参数
@@ -228,10 +247,11 @@ tmd -conf
 
 | 参数 | 类型 | 可重复 | 说明 |
 |------|------|--------|------|
-| `--profile` | bool | - | 默认，与推文下载参数配合，同时下载用户资料 |
-| `-noprofile` | bool | false | 跳过 Profile 下载 |
-| `-profile-user` | string | ✅ | 单独指定下载 profile 的用户 |
-| `-profile-list` | uint64 | ✅ | 单独指定下载 profile 的列表ID |
+| `-noprofile` | bool | - | 跳过 Profile 下载（默认在使用 `-user`/`-list`/`-foll` 时自动下载 Profile） |
+| `-profile-user` | string | ✅ | 单独指定下载 profile 的用户（无需同时下载推文） |
+| `-profile-list` | uint64 | ✅ | 单独指定下载 profile 的列表ID（无需同时下载推文） |
+
+> **注意**：使用 `-user`、`-list`、`-foll` 下载推文时，Profile 下载默认启用。使用 `-noprofile` 可跳过。使用 `-profile-user`/`-profile-list` 可仅下载 Profile 而不下载推文。
 
 ---
 
@@ -359,11 +379,11 @@ tmd -user elonmusk -dbg
 ### 场景2：下载单个用户
 
 ```bash
-# 仅下载推文
-tmd -user elonmusk -noprofile
-
-# 下载推文 + Profile
+# 下载推文 + Profile（默认行为）
 tmd -user elonmusk
+
+# 仅下载推文，不下载 Profile
+tmd -user elonmusk -noprofile
 
 # 使用用户ID
 tmd -user 44196397
@@ -375,14 +395,11 @@ tmd -user @elonmusk
 ### 场景3：批量下载多个用户
 
 ```bash
-# 下载多个用户的推文
-tmd -user elonmusk -user NASA -user SpaceX
-
 # 下载多个用户的推文 + Profile
 tmd -user elonmusk -user NASA -user SpaceX
 
-# 下载多个用户的推文，不下载Profile
-tmd -user elonmusk -user NASA -user SpaceX  -noprofile
+# 下载多个用户的推文，不下载 Profile
+tmd -user elonmusk -user NASA -user SpaceX -noprofile
 
 # 仅下载多个用户的 Profile
 tmd -profile-user elonmusk -profile-user NASA -profile-user SpaceX
@@ -391,20 +408,17 @@ tmd -profile-user elonmusk -profile-user NASA -profile-user SpaceX
 ### 场景4：下载列表
 
 ```bash
-# 下载列表成员推文
-tmd -list 1234567890123
-
 # 下载列表成员推文 + Profile
 tmd -list 1234567890123
 
-# 下载列表成员推文，不下载Profile
+# 下载列表成员推文，不下载 Profile
 tmd -list 1234567890123 -noprofile
 
 # 仅下载列表成员 Profile
 tmd -profile-list 1234567890123
 
 # 多个列表
-tmd -list 111111 -list 222222 --profile
+tmd -list 111111 -list 222222
 ```
 
 ### 场景5：下载关注列表
@@ -420,7 +434,7 @@ tmd -foll myusername
 # 用户 + 列表 + 关注列表
 tmd -user elonmusk -list 123456 -foll myusername
 
-# Profile 专用下载，只下载profile
+# Profile 专用下载，只下载 profile
 tmd -profile-user elonmusk -profile-list 123456
 ```
 
@@ -439,9 +453,6 @@ tmd -user elonmusk -mark-downloaded
 
 # 标记为指定时间
 tmd -user elonmusk -mark-downloaded -mark-time "2024-01-01T00:00:00"
-
-# 标记为全量下载（下次会下载所有推文）
-tmd -user elonmusk -mark-downloaded -mark-time "null"
 
 # 批量标记
 tmd -user a -user b -user c -mark-downloaded
@@ -536,10 +547,10 @@ Twitter API 限制一段时间内过快的请求（例如某端点每15分钟仅
 | `-user` + `-list` + `-foll` | ✅ | 多种来源可叠加 |
 | `-user` + `-list` + `-foll` + `-json` | ✅ | JSON 文件与其他来源可叠加 |
 | `-json` + `-noprofile` | ✅ | 仅从 JSON 下载媒体，跳过 Profile |
-| `-user` + `--profile` | ✅ | 下载推文和资料 |
-| `-list` + `--profile` | ✅ | 下载列表成员推文和资料 |
-| `-foll` + `--profile` | ✅ | 下载关注用户推文和资料 |
-| `-profile-user` + `-profile-list` | ✅ | 仅下载资料 |
+| `-user` + Profile 自动下载 | ✅ | 下载推文时自动下载 Profile |
+| `-list` + Profile 自动下载 | ✅ | 下载列表成员推文时自动下载 Profile |
+| `-foll` + Profile 自动下载 | ✅ | 下载关注用户推文时自动下载 Profile |
+| `-profile-user` + `-profile-list` | ✅ | 仅下载资料，不下载推文 |
 | `-user` + `-profile-user` | ✅ | 推文下载 + 额外用户资料 |
 | `-dbg` + 任意参数 | ✅ | 启用调试输出 |
 | `-auto-follow` + 推文下载 | ✅ | 自动关注受保护用户 |
@@ -547,7 +558,7 @@ Twitter API 限制一段时间内过快的请求（例如某端点每15分钟仅
 | `-mark-downloaded` + `-mark-time` | ✅ | 指定标记时间 |
 | `-mark-downloaded` + 推文下载 | ⚠️ | 只标记，不下载 |
 | `-conf` + 其他参数 | ⚠️ | 配置后退出，忽略其他 |
-| `-noprofile` + `--profile` | ⚠️ | `-noprofile` 优先，跳过 Profile |
+| `-noprofile` + 推文下载参数 | ✅ | 下载推文但跳过 Profile |
 
 ---
 
@@ -644,7 +655,6 @@ ENTITY_ID:2|USER_ID:23248887|SCREEN_NAME:NASA|STATUS:OK
 | `-auto-follow` | 自动关注受保护用户 |
 | `-no-retry` | 不重试失败推文 |
 | `-mark-downloaded` | 仅标记已下载 |
-| `--profile` | 下载用户资料 |
 | `-noprofile` | 跳过 Profile 下载 |
 
 ### 可重复参数（可多次使用）
@@ -662,4 +672,4 @@ ENTITY_ID:2|USER_ID:23248887|SCREEN_NAME:NASA|STATUS:OK
 
 | 参数 | 说明 |
 |------|------|
-| `-mark-time` | 时间戳（2006-01-02T15:04:05 或 "null"） |
+| `-mark-time` | 时间戳（2006-01-02T15:04:05） |

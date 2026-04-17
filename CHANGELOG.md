@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.11.1] - 2026-04-15
+
+### Added
+
+#### 新增未关注用户统计功能
+
+在批量下载前显示未关注的用户列表：
+
+| 文件 | 变更 |
+|------|------|
+| `internal/downloading/batch_download.go` | 新增未关注用户统计和日志输出 |
+| `internal/downloading/batch_any.go` | 简化 autoFollow 逻辑 |
+
+**功能：**
+- 下载开始前自动统计未关注用户数量
+- 显示未关注用户的名称和用户名
+- 简化 `autoFollow` 参数传递逻辑
+
+### Changed
+
+#### 文档更新
+
+- `readme.md` - 优化文档结构和内容
+
+---
+
 ## [2.11.0] - 2026-04-15
 
 ### Added
