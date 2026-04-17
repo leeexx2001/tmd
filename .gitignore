@@ -10,6 +10,9 @@ Thumbs.db
 # === Trae ===
 .trae/
 
+# === Project Specific ===
+*.lnk
+
 # === Go Build Artifacts ===
 *.exe
 *.exe~
