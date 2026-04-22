@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ***
 
+## [2.13.0] - 2026-04-15
+
+### Added
+
+#### 新增 HTTP REST API 功能
+
+TMD 现在支持通过 HTTP API 进行远程控制和 Web 集成：
+
+| 文件 | 功能 |
+|------|------|
+| `internal/api/server.go` | API 服务器核心，路由和中间件 |
+| `internal/api/handlers.go` | HTTP 请求处理器 |
+| `internal/api/executor.go` | 下载任务执行器 |
+| `internal/api/task_manager.go` | 任务队列管理 |
+| `internal/api/types.go` | API 类型定义 |
+| `doc/API_DOCUMENTATION.md` | 完整的 API 使用文档 |
+
+**API 端点：**
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/api/v1/health` | GET | 健康检查 |
+| `/api/v1/download/user` | POST | 下载用户推文 |
+| `/api/v1/download/list` | POST | 下载列表推文 |
+| `/api/v1/download/profile` | POST | 下载用户 Profile |
+| `/api/v1/tasks` | GET | 获取任务列表 |
+| `/api/v1/tasks/{id}` | GET | 获取任务详情 |
+| `/api/v1/tasks/{id}/cancel` | POST | 取消任务 |
+
+**启动方式：**
+```bash
+# 默认端口 25556
+tmd -server
+
+# 指定端口
+tmd -server -port 8080
+```
+
+**依赖更新：**
+- 新增 `github.com/gin-gonic/gin` - Web 框架
+
+### Changed
+
+#### main.go 重构
+
+- 添加 `-server` 和 `-port` 命令行参数
+- 支持 API Server 模式和传统 CLI 模式切换
+
+***
+
 ## [2.12.2] - 2026-04-15
 
 ### Changed

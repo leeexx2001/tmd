@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 	"github.com/gookit/color"
@@ -20,6 +22,7 @@ import (
 	"github.com/natefinch/lumberjack"
 	"github.com/rifflock/lfshook"
 	log "github.com/sirupsen/logrus"
+	"github.com/unkmonster/tmd/internal/api"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/downloader"
@@ -248,6 +251,8 @@ func main() {
 	var profileUsers userArgs
 	var profileList ListArgs
 	var jsonArgs jsonPathsArgs
+	var serverMode bool
+	var serverPort string
 
 	flag.BoolVar(&confArg, "conf", false, "reconfigure")
 	flag.Var(&usrArgs, "user", "download tweets from the user specified by user_id/screen_name since the last download")
@@ -262,6 +267,8 @@ func main() {
 	flag.Var(&profileUsers, "profile-user", "download profile for specified user (can be used multiple times)")
 	flag.Var(&profileList, "profile-list", "download profiles for all members in the specified list")
 	flag.Var(&jsonArgs, "json", "download media from JSON file(s) exported by other tools (supports raw API JSON and formatted .loongtweet JSON)")
+	flag.BoolVar(&serverMode, "server", false, "run in API server mode")
+	flag.StringVar(&serverPort, "port", "25556", "API server port (only used with -server)")
 	flag.Parse()
 
 	var err error
@@ -322,6 +329,12 @@ func main() {
 		return
 	}
 	log.Infoln("config is loaded")
+
+	// Server 模式启动
+	if serverMode {
+		runServer(conf, serverPort)
+		return
+	}
 	if conf.MaxDownloadRoutine > 0 {
 		downloading.MaxDownloadRoutine = conf.MaxDownloadRoutine
 	}
@@ -640,4 +653,108 @@ func handleProfileDownload(ctx context.Context, client *resty.Client, additional
 		}
 	}
 	fmt.Println("=== END_RESULTS ===")
+}
+
+// runServer 启动 API Server
+func runServer(conf *config.Config, port string) {
+	log.Infoln("Starting API server mode...")
+
+	// 设置存储路径
+	pathHelper, err := newStorePath(conf.RootPath)
+	if err != nil {
+		log.Fatalln("failed to make store dir:", err)
+	}
+
+	// 连接数据库
+	db, err := database.Connect(pathHelper.db)
+	if err != nil {
+		log.Fatalln("failed to connect to database:", err)
+	}
+	defer db.Close()
+	log.Infoln("database is connected")
+
+	// 登录 Twitter
+	ctx, cancel := context.WithCancel(context.Background())
+	client, screenName, err := twitter.Login(ctx, conf.Cookie.AuthToken, conf.Cookie.Ct0)
+	if err != nil {
+		log.Fatalln("failed to login:", err)
+	}
+	twitter.EnableRateLimit(client)
+	log.Infoln("signed in as:", screenName)
+
+	// 加载额外 Cookie
+	additionalCookiesPath := filepath.Join(getAppRootPath(), "additional_cookies.yaml")
+	cookies, _ := config.ReadAdditionalCookies(additionalCookiesPath)
+	twitterCookies := make([]twitter.AccountCookie, len(cookies))
+	for i, c := range cookies {
+		twitterCookies[i] = twitter.AccountCookie{AuthToken: c.AuthToken, Ct0: c.Ct0}
+	}
+	additional := twitter.BatchLogin(ctx, false, twitterCookies, screenName)
+
+	// 初始化下载器
+	versionManager := downloader.NewVersionManagerWithWriter(".versions", nil)
+	fileWriter := downloader.NewFileWriter(versionManager)
+	versionManager.SetFileWriter(fileWriter)
+	dwn := downloader.NewDownloader(fileWriter)
+
+	// 创建 API Server
+	server, err := api.NewServer(&api.ServerOptions{
+		Port:              port,
+		Config:            conf,
+		DB:                db,
+		Client:            client,
+		AdditionalClients: additional,
+		Downloader:        dwn,
+		FileWriter:        fileWriter,
+		VersionManager:    versionManager,
+		StoreRoot:         pathHelper.root,
+		StoreUsers:        pathHelper.users,
+		StoreData:         pathHelper.data,
+		StoreDB:           pathHelper.db,
+		StoreErrorJ:       pathHelper.errorj,
+	})
+	if err != nil {
+		log.Fatalln("failed to create API server:", err)
+	}
+
+	// Signal 处理
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer signal.Stop(sigChan)
+
+	// 启动 Server
+	go func() {
+		log.Infof("API Server listening on http://localhost:%s", port)
+		log.Infoln("Press Ctrl+C to stop")
+		if err := server.Start(); err != nil && err != http.ErrServerClosed {
+			log.Fatalln("server error:", err)
+		}
+	}()
+
+	// 等待信号
+	sig := <-sigChan
+	log.Infof("[listener] caught signal: %v, shutting down...", sig)
+	cancel()
+
+	// 优雅关闭 Server
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := server.Stop(shutdownCtx); err != nil {
+		log.Errorln("server shutdown error:", err)
+	}
+	log.Infoln("server stopped")
+}
+
+// getAppRootPath 获取应用根目录
+func getAppRootPath() string {
+	var homepath string
+	if runtime.GOOS == "windows" {
+		homepath = os.Getenv("appdata")
+	} else {
+		homepath = os.Getenv("HOME")
+	}
+	if homepath == "" {
+		panic("failed to get home path from env")
+	}
+	return filepath.Join(homepath, ".tmd2")
 }
