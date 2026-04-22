@@ -8,6 +8,7 @@
 - [功能特性](#功能特性)
 - [安装与配置](#安装与配置)
 - [命令行参数详解](#命令行参数详解)
+- [API Server 模式](#api-server-模式)
 - [Profile 下载功能](#profile-下载功能)
 - [推文 JSON 保存](#推文-json-保存)
 - [文件存储结构](#文件存储结构)
@@ -25,11 +26,20 @@
 ┌─────────────────────────────────────────────────────────────┐
 │  main.go (应用层)                                            │
 │  - 命令行解析、依赖注入、流程编排                              │
+│  - API Server / CLI 双模式支持                               │
 └──────────┬──────────────────────────────────────────────────┘
            │
 ┌──────────▼──────────────────────────────────────────────────┐
+│  internal/api (API 层)                                       │
+│  - server.go: HTTP API 服务器、路由和中间件                   │
+│  - handlers.go: HTTP 请求处理器                             │
+│  - executor.go: 下载任务执行器                              │
+│  - task_manager.go: 任务队列管理                            │
+│  - types.go: API 类型定义                                   │
+├─────────────────────────────────────────────────────────────┤
 │  internal/config (配置层)                                    │
 │  - config.go: 配置结构、读写、Cookie 管理、附加 Cookie 加载   │
+│  - partial_update.go: 部分配置更新功能                       │
 └──────────┬──────────────────────────────────────────────────┘
            │
 ┌──────────▼──────────────────┐  ┌────────────────────────────▼┐
@@ -146,6 +156,7 @@
 - **推文 JSON 保存**：保存推文完整信息为 JSON/TXT 格式
 - **JSON 文件导入**：从其他工具导出的 JSON 文件批量下载媒体
 - **标记已下载**：标记用户为已下载状态，跳过历史推文
+- **HTTP REST API**：支持 API Server 模式，可通过 HTTP 接口远程控制下载任务
 
 ---
 
@@ -252,6 +263,49 @@ tmd -conf
 | `-profile-list` | uint64 | ✅ | 单独指定下载 profile 的列表ID（无需同时下载推文） |
 
 > **注意**：使用 `-user`、`-list`、`-foll` 下载推文时，Profile 下载默认启用。使用 `-noprofile` 可跳过。使用 `-profile-user`/`-profile-list` 可仅下载 Profile 而不下载推文。
+
+### API Server 参数
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `-server` | bool | false | 启用 API Server 模式 |
+| `-port` | int | 25556 | API Server 监听端口 |
+
+> **注意**：启用 `-server` 后，程序将作为 HTTP API 服务器运行，不再执行 CLI 下载任务。详细 API 文档请参考 [API_DOCUMENTATION.md](doc/API_DOCUMENTATION.md)。
+
+---
+
+## API Server 模式
+
+TMD 支持通过 HTTP REST API 进行远程控制和 Web 集成。
+
+### 启动 API Server
+
+```bash
+# 使用默认端口 25556 启动
+tmd -server
+
+# 指定端口启动
+tmd -server -port 8080
+```
+
+### 主要 API 端点
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/api/v1/health` | GET | 健康检查 |
+| `/api/v1/download/user` | POST | 下载用户推文 |
+| `/api/v1/download/list` | POST | 下载列表推文 |
+| `/api/v1/download/profile` | POST | 下载用户 Profile |
+| `/api/v1/tasks` | GET | 获取任务列表 |
+| `/api/v1/tasks/{id}` | GET | 获取任务详情 |
+| `/api/v1/tasks/{id}/cancel` | POST | 取消任务 |
+
+### 完整 API 文档
+
+详细的 API 使用说明、请求/响应格式、示例代码请参考：
+
+📄 **[API_DOCUMENTATION.md](doc/API_DOCUMENTATION.md)**
 
 ---
 
