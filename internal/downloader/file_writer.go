@@ -3,6 +3,8 @@ package downloader
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -45,6 +47,15 @@ func NewFileWriter(versionManager VersionManager) *DefaultFileWriter {
 
 // Write 写入文件
 func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
+	// 如果提供了 Reader，使用流式模式
+	if req.IsStream() {
+		return fw.writeStream(req)
+	}
+	return fw.writeBuffer(req)
+}
+
+// writeBuffer 缓冲区写入模式（小文件）
+func (fw *DefaultFileWriter) writeBuffer(req WriteRequest) (WriteResult, error) {
 	result := WriteResult{NewSize: int64(len(req.Data))}
 
 	lock := fw.getLock(req.Path)
@@ -99,6 +110,85 @@ func (fw *DefaultFileWriter) Write(req WriteRequest) (WriteResult, error) {
 
 	result.Success = true
 	return result, nil
+}
+
+// writeStream 流式写入模式（大文件）
+func (fw *DefaultFileWriter) writeStream(req WriteRequest) (WriteResult, error) {
+	result := WriteResult{NewSize: req.Size}
+
+	lock := fw.getLock(req.Path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	// 1. 检查是否需要跳过（流式模式仅通过大小判断）
+	if req.Options.SkipUnchanged && req.Size > 0 {
+		exists, fileInfo, err := fw.fileExists(req.Path)
+		if err != nil {
+			return result, err
+		}
+		if exists && fileInfo.Size() == req.Size {
+			result.OldSize = fileInfo.Size()
+			result.Skipped = true
+			result.Success = true
+			return result, nil
+		}
+	}
+
+	// 2. 创建版本备份（如果需要）
+	if req.Options.CreateVersion && fw.versionManager != nil {
+		if _, err := os.Stat(req.Path); err == nil {
+			_, err := fw.versionManager.CreateVersion(req.Path)
+			if err != nil {
+				return result, err
+			}
+		}
+	}
+
+	// 3. 原子流式写入
+	if err := fw.atomicWriteStream(req.Path, req.Reader); err != nil {
+		return result, err
+	}
+
+	// 4. 设置修改时间
+	if req.Options.ModTime != nil {
+		if err := os.Chtimes(req.Path, time.Time{}, *req.Options.ModTime); err != nil {
+			log.Warnf("failed to set modification time for %s: %v", req.Path, err)
+		}
+	}
+
+	result.Success = true
+	return result, nil
+}
+
+// atomicWriteStream 流式原子写入
+func (fw *DefaultFileWriter) atomicWriteStream(path string, reader io.Reader) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tempFile, err := os.CreateTemp(dir, ".tmp_*")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+
+	defer os.Remove(tempPath)
+
+	// 使用缓冲区复制
+	buf := make([]byte, 32*1024) // 32KB 缓冲区
+	n, err := io.CopyBuffer(tempFile, reader, buf)
+	if err != nil {
+		tempFile.Close()
+		return fmt.Errorf("failed to copy data: %w", err)
+	}
+	if err := tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// 记录写入的字节数（用于调试）
+	log.Debugf("streamed %d bytes to %s", n, path)
+
+	return os.Rename(tempPath, path)
 }
 
 // fileExists 检查文件是否存在

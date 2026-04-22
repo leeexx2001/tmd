@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/downloader"
+	"github.com/unkmonster/tmd/internal/downloading"
+	"github.com/unkmonster/tmd/internal/twitter"
 )
 
 // Server API Server
@@ -29,6 +32,10 @@ type Server struct {
 
 	// 存储路径
 	storePath *storePathHelper
+
+	// 错误持久化
+	dumper   *downloading.TweetDumper
+	dumperMu sync.Mutex
 }
 
 type storePathHelper struct {
@@ -64,6 +71,14 @@ func NewServer(opts *ServerOptions) (*Server, error) {
 
 	mux := http.NewServeMux()
 
+	// 初始化 Dumper
+	dumper := downloading.NewDumper()
+	if err := dumper.Load(opts.StoreErrorJ); err != nil {
+		log.Warnf("[API Server] Failed to load errors.json: %v", err)
+	} else if dumper.Count() > 0 {
+		log.Infof("[API Server] Loaded %d failed tweets from errors.json", dumper.Count())
+	}
+
 	server := &Server{
 		taskManager:       NewTaskManager(5),
 		config:            opts.Config,
@@ -80,6 +95,7 @@ func NewServer(opts *ServerOptions) (*Server, error) {
 			db:     opts.StoreDB,
 			errorj: opts.StoreErrorJ,
 		},
+		dumper: dumper,
 	}
 
 	// 注册路由
@@ -116,6 +132,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// 批量操作
 	mux.HandleFunc("/api/v1/batch/download", enableCORS(s.handleBatchDownload))
+
+	// 重试接口
+	mux.HandleFunc("/api/v1/retry", enableCORS(s.handleRetry))
 }
 
 // Start 启动 Server
@@ -127,6 +146,18 @@ func (s *Server) Start() error {
 // Stop 停止 Server
 func (s *Server) Stop(ctx context.Context) error {
 	log.Info("[API Server] Shutting down...")
+
+	// 保存错误到文件
+	s.dumperMu.Lock()
+	if s.dumper.Count() > 0 {
+		if err := s.dumper.Dump(s.storePath.errorj); err != nil {
+			log.Errorf("[API Server] Failed to save errors.json: %v", err)
+		} else {
+			log.Infof("[API Server] Saved %d failed tweets to errors.json", s.dumper.Count())
+		}
+	}
+	s.dumperMu.Unlock()
+
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -385,4 +416,93 @@ func enableCORS(next http.HandlerFunc) http.HandlerFunc {
 
 		next(w, r)
 	}
+}
+
+// PushFailedTweets 添加失败推文到 Dumper
+func (s *Server) PushFailedTweets(eid int, tweets ...*twitter.Tweet) {
+	s.dumperMu.Lock()
+	defer s.dumperMu.Unlock()
+	s.dumper.Push(eid, tweets...)
+}
+
+// GetFailedTweetsCount 获取失败推文数量
+func (s *Server) GetFailedTweetsCount() int {
+	s.dumperMu.Lock()
+	defer s.dumperMu.Unlock()
+	return s.dumper.Count()
+}
+
+// RetryFailedTweets 重试失败的推文
+func (s *Server) RetryFailedTweets(ctx context.Context) error {
+	s.dumperMu.Lock()
+	defer s.dumperMu.Unlock()
+
+	if s.dumper.Count() == 0 {
+		return nil
+	}
+
+	log.Infoln("[API Server] Starting to retry failed tweets")
+	if err := downloading.RetryFailedTweets(ctx, s.dumper, s.db, s.client, s.dwn, s.fileWriter); err != nil {
+		return err
+	}
+
+	log.Infof("[API Server] Retry completed, %d tweets still failed", s.dumper.Count())
+	return nil
+}
+
+// SaveDumper 立即保存 Dumper 到文件
+func (s *Server) SaveDumper() error {
+	s.dumperMu.Lock()
+	defer s.dumperMu.Unlock()
+
+	if s.dumper.Count() > 0 {
+		return s.dumper.Dump(s.storePath.errorj)
+	}
+	return nil
+}
+
+// handleRetry 处理重试请求
+func (s *Server) handleRetry(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	var req RetryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req = RetryRequest{}
+	}
+
+	beforeCount := s.GetFailedTweetsCount()
+
+	if beforeCount == 0 {
+		writeJSON(w, http.StatusOK, Response{
+			Success: true,
+			Data: RetryResponse{
+				BeforeCount: 0,
+				AfterCount:  0,
+				Retried:     0,
+				Message:     "No failed tweets to retry",
+			},
+		})
+		return
+	}
+
+	// 创建重试任务
+	task := s.taskManager.CreateTask(TaskTypeRetry, &RetryTaskData{
+		NoRetry: req.NoRetry,
+	})
+
+	// 异步执行
+	go s.executeRetry(task)
+
+	writeJSON(w, http.StatusAccepted, Response{
+		Success: true,
+		Data: map[string]interface{}{
+			"task_id":      task.ID,
+			"status":       string(task.Status),
+			"failed_count": beforeCount,
+			"message":      "Retry task queued",
+		},
+	})
 }

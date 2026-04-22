@@ -191,6 +191,11 @@ type BatchDownloadTaskData struct {
 	NoRetry     bool
 }
 
+// RetryTaskData 重试任务数据
+type RetryTaskData struct {
+	NoRetry bool
+}
+
 // handleUserFollowingDownload 处理用户关注列表下载
 func (s *Server) handleUserFollowingDownload(w http.ResponseWriter, r *http.Request, screenName string) {
 	var req UserDownloadRequest

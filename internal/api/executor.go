@@ -52,6 +52,16 @@ func (s *Server) executeUserDownload(task *Task) {
 		return
 	}
 
+	// 保存失败推送到 Dumper
+	for _, f := range failed {
+		eid, err := f.Entity.Id()
+		if err != nil {
+			log.Warnf("[Task:%s] Failed to get entity id: %v", task.ID, err)
+			continue
+		}
+		s.PushFailedTweets(eid, f.Tweet)
+	}
+
 	// 下载 Profile（默认下载，除非指定 skip_profile）
 	if !data.SkipProfile && ctx.Err() != context.Canceled {
 		s.downloadProfile(ctx, user)
@@ -65,6 +75,13 @@ func (s *Server) executeUserDownload(task *Task) {
 		Failed:     len(failed),
 		Details:    []string{},
 	})
+
+	// 立即保存 Dumper（防止崩溃丢失）
+	if len(failed) > 0 {
+		if err := s.SaveDumper(); err != nil {
+			log.Errorf("[Task:%s] Failed to save errors.json: %v", task.ID, err)
+		}
+	}
 
 	s.taskManager.UpdateTaskStatus(task.ID, TaskStatusCompleted)
 	log.Infof("[Task:%s] User download completed: %s (media: %d, failed: %d)", task.ID, user.ScreenName, user.MediaCount, len(failed))
@@ -101,6 +118,23 @@ func (s *Server) executeListDownload(task *Task) {
 		log.Errorf("[Task:%s] List download failed for %d: %v", task.ID, data.ListID, err)
 		s.taskManager.SetTaskError(task.ID, err)
 		return
+	}
+
+	// 保存失败推送到 Dumper
+	for _, f := range failed {
+		eid, err := f.Entity.Id()
+		if err != nil {
+			log.Warnf("[Task:%s] Failed to get entity id: %v", task.ID, err)
+			continue
+		}
+		s.PushFailedTweets(eid, f.Tweet)
+	}
+
+	// 立即保存
+	if len(failed) > 0 {
+		if err := s.SaveDumper(); err != nil {
+			log.Errorf("[Task:%s] Failed to save errors.json: %v", task.ID, err)
+		}
 	}
 
 	// 设置结果
@@ -268,9 +302,26 @@ func (s *Server) executeFollowingDownload(task *Task) {
 		return
 	}
 
+	// 保存失败推送到 Dumper
+	for _, f := range failed {
+		eid, err := f.Entity.Id()
+		if err != nil {
+			log.Warnf("[Task:%s] Failed to get entity id: %v", task.ID, err)
+			continue
+		}
+		s.PushFailedTweets(eid, f.Tweet)
+	}
+
 	// 下载 Profile（默认下载，除非指定 skip_profile）
 	if !data.SkipProfile && ctx.Err() != context.Canceled {
 		s.batchDownloadListProfiles(ctx, following)
+	}
+
+	// 立即保存
+	if len(failed) > 0 {
+		if err := s.SaveDumper(); err != nil {
+			log.Errorf("[Task:%s] Failed to save errors.json: %v", task.ID, err)
+		}
 	}
 
 	// 设置结果
@@ -371,9 +422,10 @@ func (s *Server) executeBatchDownload(task *Task) {
 	ctx := task.Ctx
 
 	var totalFailed int
-	var totalDownloaded int
+	var failedQueries int // 记录查询失败的
 
-	// 下载用户
+	// ===== 阶段1: 收集所有用户 =====
+	allUsers := make([]*twitter.User, 0, len(data.Users))
 	for _, screenName := range data.Users {
 		if ctx.Err() == context.Canceled {
 			break
@@ -381,31 +433,15 @@ func (s *Server) executeBatchDownload(task *Task) {
 
 		user, _, err := twitter.GetUserByScreenName(ctx, s.client, screenName)
 		if err != nil {
-			totalFailed++
+			log.Warnf("[Task:%s] Failed to get user %s: %v", task.ID, screenName, err)
+			failedQueries++
 			continue
 		}
-
-		users := []*twitter.User{user}
-		failed, err := downloading.BatchDownloadAny(
-			ctx, s.client, s.db,
-			nil, users,
-			s.storePath.root, s.storePath.users,
-			data.AutoFollow, s.additionalClients,
-			s.dwn, s.fileWriter,
-		)
-
-		if err != nil {
-			totalFailed++
-		} else {
-			totalFailed += len(failed)
-		}
-
-		if !data.SkipProfile {
-			s.downloadProfile(ctx, user)
-		}
+		allUsers = append(allUsers, user)
 	}
 
-	// 下载列表
+	// ===== 阶段2: 收集所有列表 =====
+	allLists := make([]twitter.ListBase, 0, len(data.Lists))
 	for _, listID := range data.Lists {
 		if ctx.Err() == context.Canceled {
 			break
@@ -413,39 +449,76 @@ func (s *Server) executeBatchDownload(task *Task) {
 
 		list, err := twitter.GetLst(ctx, s.client, listID)
 		if err != nil {
-			totalFailed++
+			log.Warnf("[Task:%s] Failed to get list %d: %v", task.ID, listID, err)
+			failedQueries++
 			continue
 		}
+		allLists = append(allLists, list)
+	}
 
-		lists := []twitter.ListBase{list}
+	// ===== 阶段3: 一次性批量下载 =====
+	if len(allUsers) > 0 || len(allLists) > 0 {
 		failed, err := downloading.BatchDownloadAny(
 			ctx, s.client, s.db,
-			lists, nil,
+			allLists, allUsers,
 			s.storePath.root, s.storePath.users,
 			data.AutoFollow, s.additionalClients,
 			s.dwn, s.fileWriter,
 		)
 
 		if err != nil {
-			totalFailed++
+			log.Errorf("[Task:%s] Batch download failed: %v", task.ID, err)
+			totalFailed += len(allUsers) + len(allLists) // 整体失败，全部算失败
 		} else {
 			totalFailed += len(failed)
+			// 保存失败推文到 Dumper
+			for _, f := range failed {
+				eid, err := f.Entity.Id()
+				if err != nil {
+					log.Warnf("[Task:%s] Failed to get entity id: %v", task.ID, err)
+					continue
+				}
+				s.PushFailedTweets(eid, f.Tweet)
+			}
 		}
 
-		if !data.SkipProfile {
+		// 立即保存 Dumper
+		if s.GetFailedTweetsCount() > 0 {
+			if err := s.SaveDumper(); err != nil {
+				log.Errorf("[Task:%s] Failed to save errors.json: %v", task.ID, err)
+			}
+		}
+	}
+
+	// ===== 阶段4: 下载 Profile（保持循环，因为是独立操作）=====
+	if !data.SkipProfile {
+		for _, user := range allUsers {
+			if ctx.Err() == context.Canceled {
+				break
+			}
+			s.downloadProfile(ctx, user)
+		}
+
+		for _, list := range allLists {
+			if ctx.Err() == context.Canceled {
+				break
+			}
 			s.batchDownloadListProfiles(ctx, list)
 		}
 	}
 
+	totalFailed += failedQueries
+
 	// 设置结果
 	s.taskManager.SetTaskResult(task.ID, &TaskResult{
-		Downloaded: totalDownloaded,
+		Downloaded: len(allUsers) + len(allLists) - totalFailed,
 		Failed:     totalFailed,
 		Details:    []string{},
 	})
 
 	s.taskManager.UpdateTaskStatus(task.ID, TaskStatusCompleted)
-	log.Infof("[Task:%s] Batch download completed: users=%d, lists=%d, failed=%d", task.ID, len(data.Users), len(data.Lists), totalFailed)
+	log.Infof("[Task:%s] Batch download completed: users=%d/%d, lists=%d/%d, failed=%d",
+		task.ID, len(allUsers), len(data.Users), len(allLists), len(data.Lists), totalFailed)
 }
 
 // downloadProfile 下载用户 Profile
@@ -497,4 +570,50 @@ func (s *Server) downloadProfile(ctx context.Context, user *twitter.User) *profi
 		log.Warnf("[Profile] Failed to download: %s - %v", user.ScreenName, result.Error)
 	}
 	return result
+}
+
+// executeRetry 执行重试任务
+func (s *Server) executeRetry(task *Task) {
+	s.taskManager.UpdateTaskStatus(task.ID, TaskStatusRunning)
+
+	data := task.Data.(*RetryTaskData)
+	ctx := task.Ctx
+
+	beforeCount := s.GetFailedTweetsCount()
+
+	if data.NoRetry {
+		// 仅清理，不重试
+		s.dumperMu.Lock()
+		s.dumper.Clear()
+		s.dumperMu.Unlock()
+		if err := s.SaveDumper(); err != nil {
+			log.Errorf("[Task:%s] Failed to clear errors.json: %v", task.ID, err)
+		}
+
+		s.taskManager.SetTaskResult(task.ID, &TaskResult{
+			Downloaded: 0,
+			Failed:     0,
+			Details:    []string{"errors.json cleared"},
+		})
+		s.taskManager.UpdateTaskStatus(task.ID, TaskStatusCompleted)
+		return
+	}
+
+	// 执行重试
+	if err := s.RetryFailedTweets(ctx); err != nil {
+		log.Errorf("[Task:%s] Retry failed: %v", task.ID, err)
+		s.taskManager.SetTaskError(task.ID, err)
+		return
+	}
+
+	afterCount := s.GetFailedTweetsCount()
+
+	s.taskManager.SetTaskResult(task.ID, &TaskResult{
+		Downloaded: beforeCount - afterCount,
+		Failed:     afterCount,
+		Details:    []string{fmt.Sprintf("Retried %d tweets", beforeCount)},
+	})
+
+	s.taskManager.UpdateTaskStatus(task.ID, TaskStatusCompleted)
+	log.Infof("[Task:%s] Retry completed: %d -> %d failed tweets", task.ID, beforeCount, afterCount)
 }

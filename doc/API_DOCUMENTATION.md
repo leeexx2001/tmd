@@ -108,9 +108,6 @@ Content-Type: application/json
 # 基本下载
 curl -X POST http://localhost:25556/api/v1/users/elonmusk/download
 
-# 基本下载（默认下载 Profile）
-curl -X POST http://localhost:25556/api/v1/users/elonmusk/download
-
 # 跳过 Profile 下载
 curl -X POST http://localhost:25556/api/v1/users/elonmusk/download \
   -H "Content-Type: application/json" \

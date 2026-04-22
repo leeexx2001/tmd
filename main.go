@@ -731,6 +731,19 @@ func runServer(conf *config.Config, port string) {
 		}
 	}()
 
+	// 启动时自动重试失败的推文（在后台执行）
+	if server.GetFailedTweetsCount() > 0 {
+		go func() {
+			log.Infof("[API Server] Auto-retrying %d failed tweets from previous session...", server.GetFailedTweetsCount())
+			retryCtx, retryCancel := context.WithTimeout(context.Background(), 30*time.Minute)
+			defer retryCancel()
+
+			if err := server.RetryFailedTweets(retryCtx); err != nil {
+				log.Errorf("[API Server] Auto-retry failed: %v", err)
+			}
+		}()
+	}
+
 	// 等待信号
 	sig := <-sigChan
 	log.Infof("[listener] caught signal: %v, shutting down...", sig)

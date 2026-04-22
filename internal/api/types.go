@@ -92,3 +92,16 @@ type BatchDownloadRequest struct {
 	SkipProfile bool     `json:"skip_profile,omitempty"` // 跳过Profile下载
 	NoRetry     bool     `json:"no_retry,omitempty"`     // 不重试
 }
+
+// RetryRequest 重试请求
+type RetryRequest struct {
+	NoRetry bool `json:"no_retry,omitempty"` // 是否不重试（仅清理）
+}
+
+// RetryResponse 重试响应
+type RetryResponse struct {
+	BeforeCount int    `json:"before_count"` // 重试前失败数量
+	AfterCount  int    `json:"after_count"`  // 重试后失败数量
+	Retried     int    `json:"retried"`      // 实际重试数量
+	Message     string `json:"message"`
+}

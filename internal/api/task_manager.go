@@ -34,6 +34,7 @@ const (
 	TaskTypeFollowingDownload   TaskType = "following_download"
 	TaskTypeListProfileDownload TaskType = "list_profile_download"
 	TaskTypeBatchDownload       TaskType = "batch_download"
+	TaskTypeRetry               TaskType = "retry"
 )
 
 // Task 任务定义
