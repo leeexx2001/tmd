@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ***
 
+## [2.15.2] - 2026-04-23
+
+### Changed
+
+#### 数据库层优化
+
+| 文件 | 变更 |
+|------|------|
+| `internal/database/model.go` | 添加泛型查询函数 `Query[T]`，支持类型安全的数据库查询 |
+| `internal/database/query.go` | 扩展查询构建器功能 |
+| `internal/database/user_entity.go` | 优化用户实体查询 |
+| `internal/database/lst_entity.go` | 优化列表实体查询 |
+| `internal/database/user_link.go` | 新增 `DeleteUserLinksBatch()` 批量删除功能 |
+
+**改进：**
+- **安全性**：添加表名白名单验证，修复 SQL 注入风险
+- **性能**：使用批量删除替代循环删除，减少数据库往返
+- **代码质量**：改进命名规范（`List` 替代 `Lst`，修复 `parentDIr` 拼写）
+- **接口抽象**：`Path`/`PathTx` 使用接口抽象，清理冗余代码
+
+#### 列表同步优化
+
+| 文件 | 变更 |
+|------|------|
+| `internal/downloading/list_sync.go` | 使用新的批量删除 API |
+| `internal/downloading/list_download.go` | 清理冗余代码 |
+| `internal/downloading/batch_any.go` | 简化列表处理逻辑 |
+
+#### Twitter API 层清理
+
+| 文件 | 变更 |
+|------|------|
+| `internal/twitter/client.go` | 移除未使用的代码 |
+| `internal/twitter/list.go` | 移除未使用的代码 |
+| `internal/twitter/timeline.go` | 移除未使用的代码 |
+
+### Fixed
+
+- 修复 SQL 注入风险：添加表名白名单验证
+- 修复语法错误：`parent list does not exist`
+
+### Stats
+
+- **11 个文件变更**
+- **+155 行 / -102 行**
+- **净增加：53 行代码**
+
+***
+
 ## [2.15.1] - 2026-04-23
 
 ### Changed
