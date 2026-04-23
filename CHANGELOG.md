@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ***
 
+## [2.15.3] - 2026-04-23
+
+### Added
+
+#### 新增客户端日志记录功能
+
+为 Twitter API 客户端添加统一的日志记录能力，便于调试和监控 API 请求：
+
+| 文件 | 变更 |
+|------|------|
+| `main.go` | 添加客户端日志文件创建和配置逻辑 |
+| `internal/cli/executor.go` | 实现 `SetClientLogger()` 函数 |
+
+**功能特性：**
+- 自动创建 `client.log` 日志文件（位于应用根目录）
+- 使用 logrus 日志库，支持结构化日志输出
+- 为所有 Twitter 客户端（主账号 + 备用账号）统一设置日志记录器
+- 日志文件自动截断（`O_TRUNC`），每次启动时清空旧日志
+- 支持时间戳和格式化输出
+
+**日志配置：**
+```go
+logger.SetFormatter(&log.TextFormatter{
+    FullTimestamp: true,
+    DisableQuote:  true,
+})
+```
+
+### Stats
+
+- **3 个文件变更**
+- **+22 行 / -3 行**
+- **净增加：19 行代码**
+
+***
+
 ## [2.15.2] - 2026-04-23
 
 ### Changed
