@@ -94,19 +94,30 @@ func itemContentsToUsers(itemContents []gjson.Result) MembersResult {
 
 func getMembers(ctx context.Context, client *resty.Client, api timelineApi, instsPath string) (*MembersResult, error) {
 	api.SetCursor("")
+	log.Infoln("[getMembers] fetching members with instsPath:", instsPath)
 	itemContents, err := getTimelineItemContentsTillEnd(ctx, api, client, instsPath)
 	if err != nil {
+		log.Errorln("[getMembers] failed to get timeline items:", err)
 		return nil, err
 	}
+	log.Infoln("[getMembers] got", len(itemContents), "item contents")
 	result := itemContentsToUsers(itemContents)
+	log.Infoln("[getMembers] converted to", len(result.Users), "users")
 	return &result, nil
 }
 
 func (list *List) GetMembers(ctx context.Context, client *resty.Client) (*MembersResult, error) {
+	log.Infoln("[List.GetMembers] fetching members for list:", list.Name, "id:", list.Id)
 	api := listMembers{}
 	api.count = 200
 	api.id = list.Id
-	return getMembers(ctx, client, &api, "data.list.members_timeline.timeline.instructions")
+	result, err := getMembers(ctx, client, &api, "data.list.members_timeline.timeline.instructions")
+	if err != nil {
+		log.Errorln("[List.GetMembers] failed:", err)
+		return nil, err
+	}
+	log.Infoln("[List.GetMembers] successfully got", len(result.Users), "members")
+	return result, nil
 }
 
 func (list *List) GetId() int64 {
