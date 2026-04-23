@@ -66,9 +66,6 @@ func SetClientAuth(client *resty.Client, authToken string, ct0 string) {
 func Login(ctx context.Context, authToken string, ct0 string) (*resty.Client, string, error) {
 	client := resty.New()
 
-	// 设置请求超时（30秒）
-	client.SetTimeout(30 * time.Second)
-
 	// 鉴权
 	SetClientAuth(client, authToken, ct0)
 

@@ -2,7 +2,6 @@ package downloading
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"sync"
 
@@ -52,14 +51,24 @@ func (lsm *ListSyncManager) SyncListMembers(ctx context.Context, lstEntityId int
 		memberSet[id] = true
 	}
 
-	removedCount := 0
+	// 收集需要删除的链接ID
+	var idsToRemove []int32
 	for _, link := range links {
 		if !memberSet[link.UserId] {
-			if err := lsm.removeUserLinkWithTx(tx, link, lstEntityId); err != nil {
-				log.Warnln("failed to remove user link:", link.UserId, err)
-			} else {
-				removedCount++
+			// 先删除符号链接（文件系统操作不能在事务中批量处理）
+			if linkpath, err := link.PathTx(tx); err == nil {
+				if err := os.Remove(linkpath); err != nil && !os.IsNotExist(err) {
+					log.Warnln("failed to remove symlink:", linkpath, err)
+				}
 			}
+			idsToRemove = append(idsToRemove, link.Id)
+		}
+	}
+
+	// 批量删除数据库记录
+	if len(idsToRemove) > 0 {
+		if err := database.DeleteUserLinksBatch(tx, idsToRemove); err != nil {
+			return err
 		}
 	}
 
@@ -67,30 +76,9 @@ func (lsm *ListSyncManager) SyncListMembers(ctx context.Context, lstEntityId int
 		return err
 	}
 
-	if removedCount > 0 {
-		log.Infoln("Removed", removedCount, "users from list", lstName, "(no longer members)")
+	if len(idsToRemove) > 0 {
+		log.Infoln("Removed", len(idsToRemove), "users from list", lstName, "(no longer members)")
 	}
 
-	return nil
-}
-
-func (lsm *ListSyncManager) removeUserLinkWithTx(tx *sqlx.Tx, link *database.UserLink, lstEntityId int) error {
-	if link.Id == 0 {
-		return fmt.Errorf("link id is not valid for user %d in list %d", link.UserId, lstEntityId)
-	}
-
-	linkpath, err := link.Path(lsm.db)
-	if err == nil {
-		if err := os.Remove(linkpath); err != nil && !os.IsNotExist(err) {
-			log.Warnln("failed to remove symlink:", linkpath, err)
-		}
-	}
-
-	_, err = tx.Exec(`DELETE FROM user_links WHERE id = ?`, link.Id)
-	if err != nil {
-		return fmt.Errorf("failed to delete user link %d from database: %w", link.Id, err)
-	}
-
-	log.Debugln("Removed user link:", link.UserId, "from list", lstEntityId)
 	return nil
 }

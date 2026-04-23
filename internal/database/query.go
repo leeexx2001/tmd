@@ -7,6 +7,24 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+// 允许的表名白名单
+var allowedTables = map[string]bool{
+	"users":               true,
+	"lsts":                true,
+	"user_entities":       true,
+	"lst_entities":        true,
+	"user_links":          true,
+	"user_previous_names": true,
+}
+
+// validateTableName 验证表名是否在白名单中
+func validateTableName(table string) error {
+	if !allowedTables[table] {
+		return fmt.Errorf("invalid table name: %s", table)
+	}
+	return nil
+}
+
 // QueryOptions 查询选项
 type QueryOptions struct {
 	Where   string
@@ -16,8 +34,43 @@ type QueryOptions struct {
 	Offset  int
 }
 
+// TableQueryOptions 带表名的查询选项
+type TableQueryOptions struct {
+	Table   string
+	Where   string
+	Args    []interface{}
+	OrderBy string
+	Limit   int
+	Offset  int
+}
+
+// Query 泛型查询函数
+func Query[T any](db *sqlx.DB, opts TableQueryOptions) ([]T, error) {
+	if err := validateTableName(opts.Table); err != nil {
+		return nil, err
+	}
+
+	query := fmt.Sprintf("SELECT * FROM %s", opts.Table)
+	if opts.Where != "" {
+		query += " WHERE " + opts.Where
+	}
+	if opts.OrderBy != "" {
+		query += " " + opts.OrderBy
+	}
+	query += " LIMIT ? OFFSET ?"
+
+	var results []T
+	args := append(opts.Args, opts.Limit, opts.Offset)
+	err := db.Select(&results, query, args...)
+	return results, err
+}
+
 // Count 获取总数
 func Count(db *sqlx.DB, table string, opts *QueryOptions) (int, error) {
+	if err := validateTableName(table); err != nil {
+		return 0, err
+	}
+
 	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", table)
 	if opts != nil && opts.Where != "" {
 		query += " WHERE " + opts.Where

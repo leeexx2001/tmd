@@ -33,17 +33,17 @@ func DelUserEntity(db *sqlx.DB, id uint32) error {
 	return nil
 }
 
-func LocateUserEntity(db *sqlx.DB, uid uint64, parentDIr string) (*UserEntity, error) {
-	parentDIr, err := filepath.Abs(parentDIr)
+func LocateUserEntity(db *sqlx.DB, uid uint64, parentDir string) (*UserEntity, error) {
+	parentDir, err := filepath.Abs(parentDir)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path for %q: %w", parentDIr, err)
+		return nil, fmt.Errorf("failed to get absolute path for %q: %w", parentDir, err)
 	}
 
 	stmt := `SELECT * FROM user_entities WHERE user_id=? AND parent_dir=?`
 	result := &UserEntity{}
-	err = db.Get(result, stmt, uid, parentDIr)
+	err = db.Get(result, stmt, uid, parentDir)
 	if err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("failed to locate user entity for user %d in %q: %w", uid, parentDIr, err)
+		return nil, fmt.Errorf("failed to locate user entity for user %d in %q: %w", uid, parentDir, err)
 	}
 	return handleGetResult(result, err)
 }

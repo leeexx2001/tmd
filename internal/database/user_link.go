@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -55,4 +56,27 @@ func GetUserLinksByLstEntityId(queryer interface {
 		return nil, fmt.Errorf("failed to get user links for list entity %d: %w", lstEntityId, err)
 	}
 	return res, nil
+}
+
+// DeleteUserLinksBatch 批量删除用户链接
+func DeleteUserLinksBatch(tx *sqlx.Tx, ids []int32) error {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	// 使用参数化查询避免 SQL 注入
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+
+	stmt := fmt.Sprintf("DELETE FROM user_links WHERE id IN (%s)",
+		strings.Join(placeholders, ","))
+	_, err := tx.Exec(stmt, args...)
+	if err != nil {
+		return fmt.Errorf("failed to delete user links batch: %w", err)
+	}
+	return nil
 }

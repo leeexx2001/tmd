@@ -42,6 +42,16 @@ func GetLstEntity(db *sqlx.DB, id int) (*LstEntity, error) {
 	return handleGetResult(result, err)
 }
 
+func GetLstEntityTx(tx *sqlx.Tx, id int) (*LstEntity, error) {
+	stmt := `SELECT * FROM lst_entities WHERE id=?`
+	result := &LstEntity{}
+	err := tx.Get(result, stmt, id)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to get list entity %d: %w", id, err)
+	}
+	return handleGetResult(result, err)
+}
+
 func LocateLstEntity(db *sqlx.DB, lid int64, parentDir string) (*LstEntity, error) {
 	parentDir, err := filepath.Abs(parentDir)
 	if err != nil {

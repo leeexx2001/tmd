@@ -43,11 +43,16 @@ type UserPreviousName struct {
 	RecordDate time.Time `db:"record_date" json:"record_date"`
 }
 
-type Lst struct {
+// List 表示 Twitter 列表
+type List struct {
 	Id      uint64 `db:"id"`
 	Name    string `db:"name"`
 	OwnerId uint64 `db:"owner_uid"`
 }
+
+// Lst 是 List 的别名，用于向后兼容
+// Deprecated: 使用 List 替代
+type Lst = List
 
 type LstEntity struct {
 	Id        sql.NullInt32 `db:"id"`
@@ -70,13 +75,36 @@ func (ue *UserEntity) Path() (string, error) {
 	return filepath.Join(ue.ParentDir, ue.Name), nil
 }
 
-func (ul *UserLink) Path(db *sqlx.DB) (string, error) {
-	le, err := GetLstEntity(db, int(ul.ParentLstEntityId))
+// LstEntityGetter 获取列表实体的接口
+type LstEntityGetter interface {
+	GetLstEntity(id int) (*LstEntity, error)
+}
+
+// dbGetter 使用 *sqlx.DB 获取列表实体
+type dbGetter struct {
+	db *sqlx.DB
+}
+
+func (g *dbGetter) GetLstEntity(id int) (*LstEntity, error) {
+	return GetLstEntity(g.db, id)
+}
+
+// txGetter 使用 *sqlx.Tx 获取列表实体
+type txGetter struct {
+	tx *sqlx.Tx
+}
+
+func (g *txGetter) GetLstEntity(id int) (*LstEntity, error) {
+	return GetLstEntityTx(g.tx, id)
+}
+
+func (ul *UserLink) getPath(getter LstEntityGetter) (string, error) {
+	le, err := getter.GetLstEntity(int(ul.ParentLstEntityId))
 	if err != nil {
 		return "", err
 	}
 	if le == nil {
-		return "", fmt.Errorf("parent lst was not exists")
+		return "", fmt.Errorf("parent list does not exist")
 	}
 
 	lePath, err := le.Path()
@@ -84,6 +112,14 @@ func (ul *UserLink) Path(db *sqlx.DB) (string, error) {
 		return "", err
 	}
 	return filepath.Join(lePath, ul.Name), nil
+}
+
+func (ul *UserLink) Path(db *sqlx.DB) (string, error) {
+	return ul.getPath(&dbGetter{db: db})
+}
+
+func (ul *UserLink) PathTx(tx *sqlx.Tx) (string, error) {
+	return ul.getPath(&txGetter{tx: tx})
 }
 
 // NullInt32 辅助函数：将 sql.NullInt32 转换为 int32

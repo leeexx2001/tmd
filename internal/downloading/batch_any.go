@@ -12,34 +12,28 @@ import (
 )
 
 func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, lists []twitter.ListBase, users []*twitter.User, dir string, realDir string, autoFollow bool, additional []*resty.Client, dwn downloader.Downloader, fileWriter downloader.FileWriter) ([]*TweetInEntity, error) {
-	log.Infoln("[BatchDownloadAny] start collecting users, lists count:", len(lists), "users count:", len(users))
+	log.Debugln("start collecting users")
 	packgedUsers := make([]userInListEntity, 0)
 	wg := sync.WaitGroup{}
 	mtx := sync.Mutex{}
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
-	for i, lst := range lists {
-		log.Infoln("[BatchDownloadAny] processing list", i, ":", lst.Title())
+	for _, lst := range lists {
 		wg.Add(1)
-		go func(index int, lst twitter.ListBase) {
+		go func(lst twitter.ListBase) {
 			defer wg.Done()
-			log.Infoln("[BatchDownloadAny] getting members for list:", lst.Title())
 			res, err := syncListAndGetMembers(ctx, client, db, lst, dir)
 			if err != nil {
-				log.Errorln("[BatchDownloadAny] failed to get members for list:", lst.Title(), "error:", err)
 				cancel(err)
-				return
 			}
-			log.Infoln("[BatchDownloadAny] list", lst.Title(), "has", len(res), "members")
+			log.Debugf("members of %s: %d", lst.Title(), len(res))
 			mtx.Lock()
 			defer mtx.Unlock()
 			packgedUsers = append(packgedUsers, res...)
-		}(i, lst)
+		}(lst)
 	}
-	log.Infoln("[BatchDownloadAny] waiting for all lists to complete...")
 	wg.Wait()
-	log.Infoln("[BatchDownloadAny] all lists completed")
 	if err := context.Cause(ctx); err != nil {
 		return nil, err
 	}
