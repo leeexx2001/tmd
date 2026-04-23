@@ -245,6 +245,18 @@ func runServer(conf *config.Config, appRootPath string, port int) {
 	}
 	additional := twitter.BatchLogin(ctx, false, twitterCookies, screenName)
 
+	// 设置客户端日志
+	cliLogPath := filepath.Join(appRootPath, "client.log")
+	cliLogFile, err := os.OpenFile(cliLogPath, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		log.Fatalln("failed to create log file:", err)
+	}
+	defer cliLogFile.Close()
+	cli.SetClientLogger(client, cliLogFile)
+	for _, c := range additional {
+		cli.SetClientLogger(c, cliLogFile)
+	}
+
 	// 连接数据库
 	pathHelper, err := path.NewStorePath(conf.RootPath)
 	if err != nil {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-resty/resty/v2"
 	"github.com/jmoiron/sqlx"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/service"
@@ -144,8 +145,14 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 
 // SetClientLogger 设置客户端日志
 func SetClientLogger(client *resty.Client, out io.Writer) {
-	// 此函数保留以保持向后兼容
-	// 实际实现已在其他地方
+	logger := log.New()
+	logger.SetLevel(log.InfoLevel)
+	logger.SetOutput(out)
+	logger.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+		DisableQuote:  true,
+	})
+	client.SetLogger(logger)
 }
 
 // Task 任务结构体（保留以保持兼容性）

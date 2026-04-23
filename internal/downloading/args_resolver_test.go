@@ -251,7 +251,7 @@ func TestJsonPathsArgs_GetPaths_Empty(t *testing.T) {
 
 	paths := ja.GetPaths()
 	// 当 Paths 为 nil 时，GetPaths 返回 nil 是合理的
-	if paths != nil && len(paths) != 0 {
+	if len(paths) != 0 {
 		t.Errorf("GetPaths() = %v, want nil or empty slice", paths)
 	}
 }
