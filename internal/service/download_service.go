@@ -12,7 +12,6 @@ import (
 	"github.com/unkmonster/tmd/internal/downloader"
 	"github.com/unkmonster/tmd/internal/downloading"
 	"github.com/unkmonster/tmd/internal/path"
-	"github.com/unkmonster/tmd/internal/profile"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
 
@@ -23,16 +22,18 @@ type DownloadService struct {
 	db                *sqlx.DB
 	conf              *config.Config
 	appRootPath       string
+	profileService    *ProfileService
 }
 
 // NewDownloadService 创建下载服务
-func NewDownloadService(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, conf *config.Config, appRootPath string) *DownloadService {
+func NewDownloadService(client *resty.Client, additionalClients []*resty.Client, db *sqlx.DB, conf *config.Config, appRootPath string, profileService *ProfileService) *DownloadService {
 	return &DownloadService{
 		client:            client,
 		additionalClients: additionalClients,
 		db:                db,
 		conf:              conf,
 		appRootPath:       appRootPath,
+		profileService:    profileService,
 	}
 }
 
@@ -200,77 +201,9 @@ type DownloadProfilesRequest struct {
 
 // ExecuteDownloadProfiles 执行 Profile 下载
 func (s *DownloadService) ExecuteDownloadProfiles(ctx context.Context, req *DownloadProfilesRequest) error {
-	pathHelper, err := path.NewStorePath(s.conf.RootPath)
-	if err != nil {
-		return fmt.Errorf("failed to create store path: %w", err)
-	}
-
-	// 创建下载器
-	versionManager := downloader.NewVersionManagerWithWriter(pathHelper.Data, nil)
-	fileWriter := downloader.NewFileWriter(versionManager)
-	versionManager.SetFileWriter(fileWriter)
-	dwn := downloader.NewDownloader(fileWriter)
-
-	// 创建 Profile 存储
-	storage, err := profile.NewFileStorageManager(pathHelper.Users)
-	if err != nil {
-		return fmt.Errorf("failed to create profile storage: %w", err)
-	}
-	storage.SetVersionManager(versionManager)
-
-	// 创建 Profile 下载器
-	clients := make([]*resty.Client, 0)
-	clients = append(clients, s.client)
-	clients = append(clients, s.additionalClients...)
-	profileDownloader := profile.NewProfileDownloaderWithDB(nil, storage, clients, s.db, dwn, fileWriter)
-
-	// 构建请求列表
-	requests := make([]profile.DownloadRequest, 0, len(req.Users))
-	for _, user := range req.Users {
-		requests = append(requests, profile.DownloadRequest{
-			ScreenName: user.ScreenName,
-			UserTitle:  user.Title(),
-			Name:       user.Name,
-			UserID:     user.Id,
-			AvatarURL:  user.AvatarURL,
-			BannerURL:  user.BannerURL,
-		})
-	}
-
-	if len(requests) == 0 {
-		log.Infoln("No profile requests to download")
-		return nil
-	}
-
-	// 去重
-	seen := make(map[string]bool)
-	uniqueRequests := make([]profile.DownloadRequest, 0)
-	for _, req := range requests {
-		if !seen[req.ScreenName] {
-			seen[req.ScreenName] = true
-			uniqueRequests = append(uniqueRequests, req)
-		}
-	}
-
-	log.Infoln("Starting profile download for", len(uniqueRequests), "users")
-	results := profileDownloader.DownloadMultiple(ctx, uniqueRequests)
-
-	success := 0
-	failed := 0
-	skipped := 0
-	for _, r := range results {
-		if r.Success {
-			success++
-		} else if r.Error != nil {
-			failed++
-		} else {
-			skipped++
-		}
-	}
-
-	log.Infoln("profile download completed - total:", len(results), "success:", success, "failed:", failed, "skipped:", skipped)
-
-	return nil
+	return s.profileService.ExecuteDownloadProfiles(ctx, &DownloadProfilesRequest{
+		Users: req.Users,
+	})
 }
 
 // DownloadListProfilesRequest 下载列表 Profile 请求

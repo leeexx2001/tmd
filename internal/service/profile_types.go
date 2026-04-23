@@ -1,4 +1,4 @@
-package profile
+package service
 
 import (
 	"context"
@@ -65,8 +65,8 @@ type FileResult struct {
 	Error    error
 }
 
-// DownloadResult 下载结果
-type DownloadResult struct {
+// ProfileDownloadResult Profile 下载结果（原 DownloadResult，避免与 downloader.DownloadResult 冲突）
+type ProfileDownloadResult struct {
 	ScreenName   string
 	Success      bool
 	Files        []FileResult
@@ -75,27 +75,24 @@ type DownloadResult struct {
 	Profile      *ProfileInfo
 }
 
-// Config 下载器配置
-type Config struct {
-	// 是否启用版本管理
+// ProfileServiceConfig Profile 服务配置（原 Config）
+type ProfileServiceConfig struct {
 	EnableVersioning bool
-	// 是否跳过已存在的未变更文件
-	SkipUnchanged bool
-	// 头像图片质量 (如 "400x400", "200x200")
-	AvatarQuality string
+	SkipUnchanged    bool
+	AvatarQuality    string
 }
 
-// DefaultConfig 返回默认配置
-func DefaultConfig() *Config {
-	return &Config{
+// DefaultProfileServiceConfig 返回默认配置
+func DefaultProfileServiceConfig() *ProfileServiceConfig {
+	return &ProfileServiceConfig{
 		EnableVersioning: true,
 		SkipUnchanged:    true,
 		AvatarQuality:    "400x400",
 	}
 }
 
-// Fetcher 远程数据获取器接口
-type Fetcher interface {
+// ProfileFetcher 远程数据获取器接口（原 Fetcher）
+type ProfileFetcher interface {
 	FetchProfile(ctx context.Context, screenName string) (*ProfileInfo, error)
 	Client() *resty.Client
 }

@@ -1,4 +1,4 @@
-package profile
+package service
 
 import (
 	"errors"
@@ -83,7 +83,7 @@ func TestGetHighResAvatarURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := GetHighResAvatarURL(tt.url, tt.quality)
+			result := getHighResAvatarURL(tt.url, tt.quality)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -128,8 +128,8 @@ func TestFileStatusString(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig(t *testing.T) {
-	cfg := DefaultConfig()
+func TestDefaultProfileServiceConfig(t *testing.T) {
+	cfg := DefaultProfileServiceConfig()
 	assert.NotNil(t, cfg)
 	assert.True(t, cfg.EnableVersioning)
 	assert.True(t, cfg.SkipUnchanged)
@@ -149,7 +149,7 @@ func TestProfileToJSON(t *testing.T) {
 		CreatedAt:   "2024-01-01",
 	}
 
-	data, err := ProfileToJSON(profile)
+	data, err := profileToJSON(profile)
 	assert.NoError(t, err)
 	assert.Contains(t, string(data), `"ID": 999`)
 	assert.Contains(t, string(data), `"Name": "JSON User"`)
@@ -160,7 +160,7 @@ func TestProfileToJSON(t *testing.T) {
 
 func TestTwitterFetcher_Client(t *testing.T) {
 	t.Run("nil clients returns nil", func(t *testing.T) {
-		tf := &TwitterFetcher{}
+		tf := &twitterFetcher{}
 		assert.Nil(t, tf.Client())
 	})
 }
