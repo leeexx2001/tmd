@@ -1,11 +1,11 @@
-package cli
+package path
 
 import (
 	"os"
 	"path/filepath"
 )
 
-// StorePath 存储路径
+// StorePath 存储路径管理
 type StorePath struct {
 	Root   string
 	Users  string

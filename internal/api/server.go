@@ -15,6 +15,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/config"
+	"github.com/unkmonster/tmd/internal/service"
 	"github.com/unkmonster/tmd/internal/twitter"
 )
 
@@ -27,6 +28,7 @@ type Server struct {
 	appRootPath       string
 	taskManager       *TaskManager
 	asyncExecutor     *AsyncExecutor
+	services          *service.Services
 }
 
 // NewServer 创建 API Server
@@ -38,6 +40,7 @@ func NewServer(client *resty.Client, additionalClients []*resty.Client, db *sqlx
 		config:            config,
 		appRootPath:       appRootPath,
 		taskManager:       NewTaskManager(),
+		services:          service.NewServices(client, additionalClients, db, config, appRootPath),
 	}
 	s.asyncExecutor = NewAsyncExecutor(s.taskManager, s)
 	return s
@@ -210,13 +213,8 @@ func (s *Server) handleUserDownload(w http.ResponseWriter, r *http.Request, scre
 	// 创建任务
 	task := s.taskManager.CreateTask(TaskTypeUserDownload, &req)
 
-	// 构建参数并执行
-	args, err := BuildArgs(TaskTypeUserDownload, &req)
-	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to build args: %v", err))
-		return
-	}
-	s.asyncExecutor.Execute(task.ID, args)
+	// 执行任务
+	s.asyncExecutor.ExecuteTask(task.ID, TaskTypeUserDownload, &req)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"task_id": task.ID,
@@ -245,9 +243,8 @@ func (s *Server) handleUserProfile(w http.ResponseWriter, r *http.Request, scree
 	// 创建任务
 	task := s.taskManager.CreateTask(TaskTypeProfileDownload, &req)
 
-	// 构建参数并执行
-	args, _ := BuildArgs(TaskTypeProfileDownload, &req)
-	s.asyncExecutor.Execute(task.ID, args)
+	// 执行任务
+	s.asyncExecutor.ExecuteTask(task.ID, TaskTypeProfileDownload, &req)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"task_id":     task.ID,
@@ -273,9 +270,8 @@ func (s *Server) handleUserMark(w http.ResponseWriter, r *http.Request, screenNa
 	// 创建任务
 	task := s.taskManager.CreateTask(TaskTypeMarkDownloaded, &req)
 
-	// 构建参数并执行
-	args, _ := BuildArgs(TaskTypeMarkDownloaded, &req)
-	s.asyncExecutor.Execute(task.ID, args)
+	// 执行任务
+	s.asyncExecutor.ExecuteTask(task.ID, TaskTypeMarkDownloaded, &req)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"task_id":     task.ID,
@@ -310,9 +306,8 @@ func (s *Server) handleFollowingDownload(w http.ResponseWriter, r *http.Request,
 	// 创建任务
 	task := s.taskManager.CreateTask(TaskTypeFollowingDownload, &req)
 
-	// 构建参数并执行
-	args, _ := BuildArgs(TaskTypeFollowingDownload, &req)
-	s.asyncExecutor.Execute(task.ID, args)
+	// 执行任务
+	s.asyncExecutor.ExecuteTask(task.ID, TaskTypeFollowingDownload, &req)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"task_id": task.ID,
@@ -373,9 +368,8 @@ func (s *Server) handleListDownload(w http.ResponseWriter, r *http.Request, list
 	// 创建任务
 	task := s.taskManager.CreateTask(TaskTypeListDownload, &req)
 
-	// 构建参数并执行
-	args, _ := BuildArgs(TaskTypeListDownload, &req)
-	s.asyncExecutor.Execute(task.ID, args)
+	// 执行任务
+	s.asyncExecutor.ExecuteTask(task.ID, TaskTypeListDownload, &req)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"task_id":      task.ID,
@@ -423,9 +417,8 @@ func (s *Server) handleListProfile(w http.ResponseWriter, r *http.Request, listI
 
 	task := s.taskManager.CreateTask(TaskTypeListProfile, &req)
 
-	// 构建参数并执行
-	args, _ := BuildArgs(TaskTypeListProfile, &req)
-	s.asyncExecutor.Execute(task.ID, args)
+	// 执行任务
+	s.asyncExecutor.ExecuteTask(task.ID, TaskTypeListProfile, &req)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"task_id":    task.ID,
@@ -457,9 +450,8 @@ func (s *Server) handleJsonDownload(w http.ResponseWriter, r *http.Request) {
 	// 创建任务
 	task := s.taskManager.CreateTask(TaskTypeJsonDownload, &req)
 
-	// 构建参数并执行
-	args, _ := BuildArgs(TaskTypeJsonDownload, &req)
-	s.asyncExecutor.Execute(task.ID, args)
+	// 执行任务
+	s.asyncExecutor.ExecuteTask(task.ID, TaskTypeJsonDownload, &req)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"task_id":  task.ID,
@@ -491,9 +483,8 @@ func (s *Server) handleBatchDownload(w http.ResponseWriter, r *http.Request) {
 	// 创建任务
 	task := s.taskManager.CreateTask(TaskTypeBatchDownload, &req)
 
-	// 构建参数并执行
-	args, _ := BuildArgs(TaskTypeBatchDownload, &req)
-	s.asyncExecutor.Execute(task.ID, args)
+	// 执行任务
+	s.asyncExecutor.ExecuteTask(task.ID, TaskTypeBatchDownload, &req)
 
 	s.writeJSON(w, http.StatusAccepted, NewSuccessResponse(map[string]interface{}{
 		"task_id":      task.ID,
