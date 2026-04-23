@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ***
 
+## [2.15.0] - 2026-04-23
+
+### Added
+
+#### 新增 Service 层架构
+
+| 文件 | 功能 |
+|------|------|
+| `internal/service/service.go` | Service 接口定义 |
+| `internal/service/download_service.go` | 下载服务实现 |
+| `internal/service/json_service.go` | JSON 处理服务 |
+| `internal/service/mark_service.go` | 标记服务实现 |
+
+**特性：**
+- 业务逻辑与 CLI/API 层解耦
+- 统一的错误处理和状态管理
+- 支持异步任务执行
+
+#### 新增路径管理模块
+
+| 文件 | 功能 |
+|------|------|
+| `internal/path/store.go` | 存储路径管理（从 cli 迁移） |
+| `internal/path/store_test.go` | 路径管理测试 |
+
+#### 新增参数解析器
+
+| 文件 | 功能 |
+|------|------|
+| `internal/downloading/args_resolver.go` | 下载参数解析 |
+| `internal/downloading/args_resolver_test.go` | 解析器测试 |
+
+#### 新增测试覆盖
+
+| 文件 | 说明 |
+|------|------|
+| `internal/cli/args_test.go` | CLI 参数解析测试（290 行） |
+| `internal/cli/helpers_test.go` | CLI 辅助函数测试（268 行） |
+
+### Changed
+
+#### 架构重构
+
+| 文件 | 变更 |
+|------|------|
+| `internal/cli/args.go` | 简化参数解析，移除冗余逻辑 |
+| `internal/cli/executor.go` | 使用 Service 层执行业务逻辑 |
+| `internal/api/async_executor.go` | 优化异步任务执行（+319/-133） |
+| `internal/api/server.go` | 集成 Service 层 |
+
+#### 代码清理
+
+- 删除 `internal/cli/helpers.go`（功能合并到 service 层）
+- 删除 `internal/cli/paths.go`（迁移到 `internal/path/`）
+
+### Stats
+
+- **18 个文件变更**
+- **+2550 行 / -612 行**
+- **新增文件：** 10 个
+- **删除文件：** 2 个
+- **新增测试：** 1004 行
+
+***
+
 ## [2.14.2] - 2026-04-23
 
 ### Added
