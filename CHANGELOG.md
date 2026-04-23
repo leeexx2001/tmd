@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ***
 
+## [2.15.1] - 2026-04-23
+
+### Changed
+
+#### Profile 模块重构
+
+将 `internal/profile/` 模块重构到 `internal/service/` 层，统一架构设计：
+
+| 原文件 | 新文件 |
+|--------|--------|
+| `internal/profile/fetcher.go` | `internal/service/profile_fetcher.go` |
+| `internal/profile/downloader.go` | 合并到 `internal/service/profile_service.go` |
+| `internal/profile/storage.go` | `internal/service/profile_storage.go` |
+| `internal/profile/types.go` | `internal/service/profile_types.go` |
+| `internal/profile/fetcher_test.go` | `internal/service/profile_service_test.go` |
+
+**改进：**
+- Profile 功能统一纳入 Service 层管理
+- 更好的代码组织和依赖管理
+- 保持原有功能不变
+
+### Stats
+
+- **10 个文件变更**
+- **+662 行 / -620 行**
+- **删除目录：** `internal/profile/`
+- **新增文件：** 5 个（service 层）
+
+***
+
 ## [2.15.0] - 2026-04-23
 
 ### Added
