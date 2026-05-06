@@ -132,6 +132,8 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("GET /system", s.handleWeb)
 	mux.HandleFunc("GET /static/{$}", s.handleStatic)
 	mux.HandleFunc("GET /static/{path...}", s.handleStatic)
+	mux.HandleFunc("GET /assets/{$}", s.handleStatic)
+	mux.HandleFunc("GET /assets/{path...}", s.handleStatic)
 	mux.HandleFunc("GET /api/v1/sse/tasks", s.handleSSETasks)
 
 	mux.HandleFunc("GET /api/v1/db/users", s.handleDBUsers)

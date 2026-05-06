@@ -1,0 +1,68 @@
+// Base Styles - Reset & Global Styles
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-elevated) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--bg-elevated);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--border-secondary);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+#app {
+  display: flex;
+  min-height: 100vh;
+}
+
+button, input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  outline: none;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--accent-primary);
+  text-decoration: none;
+}
+
+ul, ol {
+  list-style: none;
+}
