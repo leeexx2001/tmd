@@ -972,6 +972,7 @@ func TestAuthCheck_ValidJWT_ReturnsAuthenticated(t *testing.T) {
 		Success bool `json:"success"`
 		Data    struct {
 			Authenticated bool `json:"authenticated"`
+			AuthEnabled   bool `json:"auth_enabled"`
 			Valid         bool `json:"valid"`
 		} `json:"data"`
 	}
@@ -1001,11 +1002,96 @@ func TestAuthCheck_NoToken_ReturnsUnauthenticated(t *testing.T) {
 		Success bool `json:"success"`
 		Data    struct {
 			Authenticated bool `json:"authenticated"`
+			AuthEnabled   bool `json:"auth_enabled"`
 		} `json:"data"`
 	}
 	err := json.Unmarshal(rr.Body.Bytes(), &resp)
 	assert.NoError(t, err)
 	assert.False(t, resp.Data.Authenticated)
+	assert.True(t, resp.Data.AuthEnabled, "APIKey is set, auth_enabled should be true")
+}
+
+func TestAuthCheck_NonGETMethod_ReturnsMethodNotAllowed(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+	server.config.APIKey = "check-key"
+
+	methods := []string{
+		http.MethodPost,
+		http.MethodPut,
+		http.MethodDelete,
+		http.MethodPatch,
+	}
+
+	for _, method := range methods {
+		t.Run(method, func(t *testing.T) {
+			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				server.handleAuthCheck(w, r)
+			})
+
+			req := httptest.NewRequest(method, "/api/v1/auth/check", nil)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusMethodNotAllowed, rr.Code, "non-GET method %s should be rejected", method)
+
+			var resp struct {
+				Success bool   `json:"success"`
+				Error   string `json:"error"`
+			}
+			err := json.Unmarshal(rr.Body.Bytes(), &resp)
+			assert.NoError(t, err)
+			assert.False(t, resp.Success)
+			assert.Contains(t, resp.Error, "Method not allowed")
+		})
+	}
+}
+
+func TestAuthCheck_ReturnsAuthEnabledField(t *testing.T) {
+	server, db := setupTestServer(t)
+	defer db.Close()
+
+	t.Run("api_key 已设置时 auth_enabled=true", func(t *testing.T) {
+		server.config.APIKey = "check-key"
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server.handleAuthCheck(w, r)
+		})
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/check", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var resp struct {
+			Success bool `json:"success"`
+			Data    struct {
+				AuthEnabled bool `json:"auth_enabled"`
+			} `json:"data"`
+		}
+		err := json.Unmarshal(rr.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.True(t, resp.Data.AuthEnabled)
+	})
+
+	t.Run("api_key 为空时 auth_enabled=false", func(t *testing.T) {
+		server.config.APIKey = ""
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server.handleAuthCheck(w, r)
+		})
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/check", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+
+		assert.Equal(t, http.StatusOK, rr.Code)
+		var resp struct {
+			Success bool `json:"success"`
+			Data    struct {
+				AuthEnabled bool `json:"auth_enabled"`
+			} `json:"data"`
+		}
+		err := json.Unmarshal(rr.Body.Bytes(), &resp)
+		assert.NoError(t, err)
+		assert.False(t, resp.Data.AuthEnabled)
+	})
 }
 
 func TestAuthMiddleware_BuildHandler_JWT_Integration(t *testing.T) {

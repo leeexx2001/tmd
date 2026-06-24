@@ -160,7 +160,14 @@ func GetFieldDefs() []FieldDef {
 			Prompt:  "enter API key for HTTP auth (leave empty to disable)",
 			Default: "",
 			Getter:  func(c *Config) string { return c.APIKey },
-			Setter:  func(c *Config, v string) error { c.APIKey = strings.TrimSpace(v); return nil },
+		Setter: func(c *Config, v string) error {
+			v = strings.TrimSpace(v)
+			if v != "" && len(v) < 8 {
+				return fmt.Errorf("api_key must be at least 8 characters when set")
+			}
+			c.APIKey = v
+			return nil
+		},
 		},
 	}
 }

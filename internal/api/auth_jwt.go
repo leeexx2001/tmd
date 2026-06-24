@@ -97,16 +97,8 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-
-	// Rate limit check (基于纯 IP，排除端口)
-	clientAddr := clientIP(r.RemoteAddr)
-	if !s.authRateLimit.Allow(clientAddr) {
-		log.Warnf("[auth] Rate limit exceeded for %s", clientAddr)
-		s.writeError(w, http.StatusTooManyRequests, "too many requests")
-		return
-	}
-
-	// Read current API Key
+	// Read current API Key first — before rate limiting,
+	// so empty API key doesn't consume rate limit quota
 	s.configMu.RLock()
 	apiKey := s.config.APIKey
 	s.configMu.RUnlock()
@@ -117,10 +109,21 @@ func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Rate limit check (基于纯 IP，排除端口)
+	clientAddr := clientIP(r.RemoteAddr)
+	if !s.authRateLimit.Allow(clientAddr) {
+		log.Warnf("[auth] Rate limit exceeded for %s", clientAddr)
+		s.writeError(w, http.StatusTooManyRequests, "too many requests")
+		return
+	}
+
 	// Validate
 	if token != apiKey {
 		s.authRateLimit.Fail(clientAddr)
 		log.Warnf("[auth] Failed login attempt from %s", clientAddr)
+		if len(token) >= 4 {
+			log.Debugf("[auth] Failed login token prefix: %q", token[:4])
+		}
 		s.writeError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -203,6 +206,18 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 // handleAuthCheck returns the current JWT status.
 // Requires a valid JWT (handled by authMiddleware).
 func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	// Read API Key first — determines whether auth is enabled at all
+	s.configMu.RLock()
+	apiKey := s.config.APIKey
+	s.configMu.RUnlock()
+
+	authEnabled := apiKey != ""
+
 	tokenStr := extractBearerToken(r)
 	if tokenStr == "" {
 		tokenStr = r.URL.Query().Get("token")
@@ -211,13 +226,10 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	if tokenStr == "" {
 		s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 			"authenticated": false,
+			"auth_enabled":  authEnabled,
 		}))
 		return
 	}
-
-	s.configMu.RLock()
-	apiKey := s.config.APIKey
-	s.configMu.RUnlock()
 
 	// Rate limit check
 	clientAddr := clientIP(r.RemoteAddr)
@@ -225,6 +237,7 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 		log.Warnf("[auth] Check rate limit exceeded for %s", clientAddr)
 		s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 			"authenticated": false,
+			"auth_enabled":  authEnabled,
 			"valid":         false,
 			"error":         "too many requests",
 		}))
@@ -234,6 +247,7 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 	if apiKey == "" {
 		s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 			"authenticated": false,
+			"auth_enabled":  false,
 		}))
 		return
 	}
@@ -248,6 +262,7 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 		log.Debugf("[auth] Check: %v", err)
 		s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 			"authenticated": false,
+			"auth_enabled":  true,
 			"valid":         false,
 			"expired":       isExpired,
 			"error":         errMsg,
@@ -266,6 +281,7 @@ func (s *Server) handleAuthCheck(w http.ResponseWriter, r *http.Request) {
 
 	s.writeJSON(w, http.StatusOK, NewSuccessResponse(map[string]interface{}{
 		"authenticated": true,
+		"auth_enabled":  true,
 		"valid":         true,
 		"expires_at":    exp.UTC().Format(time.RFC3339),
 		"expires_in":    int(remaining.Seconds()),
