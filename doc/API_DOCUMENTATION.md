@@ -137,9 +137,8 @@ Web UI 在首次遇到 401 时会弹出认证对话框，输入 Key 后自动获
 
 `EventSource` API 无法设置自定义 HTTP 头，SSE 端点通过 `?token=` 查询参数认证：
 
-```javascript
-// 从 localStorage 读取 token（优先 JWT，无 JWT 时直接使用 API Key）
-const key = localStorage.getItem('tmd_jwt_token') || localStorage.getItem('tmd_api_key');
+// 从 localStorage 读取 JWT token（前端不存储原始 API Key）
+const key = localStorage.getItem('tmd_jwt_token');
 
 // 任务状态 SSE
 new EventSource('/api/v1/sse/tasks?token=' + encodeURIComponent(key))
@@ -230,7 +229,7 @@ GET /api/v1/health
   "success": true,
   "data": {
     "status": "ok",
-    "version": "3.4.19",
+    "version": "v3.4.25",
     "timestamp": "2024-01-15T10:30:00Z"
   }
 }
@@ -292,8 +291,7 @@ curl http://localhost:25556/api/v1/tasks \
 
 在 JWT 过期前刷新，避免重新输入 API Key。
 
-> 🔒 **需要认证**：需要携带有效的（或刚过期的）JWT。过期 30 秒内的 JWT 仍可刷新。
-
+> 🔒 **需要认证**：需要携带有效的或已过期但签名正确的 JWT。authMiddleware 对 refresh/check 端点特殊处理——只要 JWT 签名有效（允许过期），就放行到 handler。
 ```http
 POST /api/v1/auth/refresh
 Authorization: Bearer <jwt-token>
@@ -311,10 +309,7 @@ curl -X POST http://localhost:25556/api/v1/auth/refresh \
 #### 检查 JWT 状态
 
 查询当前 JWT 的有效性和过期时间。
-
-> 🔒 **需要认证**：需要携带 JWT。接受有效或刚过期的 JWT（签名正确即可，handler 返回过期状态而非 401）。
-
-```http
+> 🔒 **需要认证**：需要携带 JWT。与 refresh 相同——authMiddleware 放行签名正确（允许过期）的 JWT，handler 返回过期状态而非 401。
 GET /api/v1/auth/check
 Authorization: Bearer <jwt-token>
 ```
@@ -331,13 +326,12 @@ curl http://localhost:25556/api/v1/auth/check \
 ```json
 {
   "success": true,
-  "data": {
     "authenticated": true,
+    "auth_enabled": true,
     "valid": true,
     "expires_at": "2026-06-25T12:00:00Z",
     "expires_in": 3590,
     "needs_refresh": false
-  }
 }
 ```
 
@@ -1894,8 +1888,8 @@ data: [{"task_id":"task_xxx","status":"running",...}]
 // 未开启认证时
 const sse = new EventSource('http://localhost:25556/api/v1/sse/tasks');
 
-// 开启认证后需要携带 ?token=（优先使用 JWT，回退到 API Key）
-const token = localStorage.getItem('tmd_jwt_token') || localStorage.getItem('tmd_api_key');
+// 开启认证后需要携带 ?token=（使用 JWT，前端不存储原始 API Key）
+const token = localStorage.getItem('tmd_jwt_token');
 const sse = new EventSource('/api/v1/sse/tasks?token=' + encodeURIComponent(token));
 sse.addEventListener('tasks', (event) => {
     const tasks = JSON.parse(event.data);
@@ -2543,7 +2537,7 @@ data: [2024-01-15 10:30:00] [INFO] Download completed: user elonmusk, 15 media
 **示例：**
 
 ```javascript
-const token = localStorage.getItem('tmd_jwt_token') || localStorage.getItem('tmd_api_key');
+const token = localStorage.getItem('tmd_jwt_token');
 const baseURL = '/api/v1/logs/stream?level=error';
 const url = token ? baseURL + '&token=' + encodeURIComponent(token) : baseURL;
 const logStream = new EventSource(url);
@@ -4049,6 +4043,9 @@ TASK_ID=$(curl -s -X POST http://localhost:25556/api/v1/lists/123456789/download
 | 端点                                        | 方法   | 功能             |
 | ----------------------------------------- | ---- | -------------- |
 | `/api/v1/health`                          | GET  | 健康检查           |
+| `/api/v1/auth/login`                     | POST | 用 API Key 换取 JWT 令牌 |
+| `/api/v1/auth/refresh`                   | POST | 刷新 JWT 令牌 |
+| `/api/v1/auth/check`                     | GET  | 检查 JWT 有效性 |
 | `/api/v1/users/{name}/download`           | POST | 下载用户推文         |
 | `/api/v1/users/{name}/profile`            | POST | 下载用户 Profile   |
 | `/api/v1/users/{name}/mark`               | POST | 标记用户为已下载       |
@@ -4080,6 +4077,10 @@ TASK_ID=$(curl -s -X POST http://localhost:25556/api/v1/lists/123456789/download
 | `/system`                                 | GET  | Web 系统配置页（SPA路由） |
 | `/logs`                                   | GET  | Web 日志页面（SPA路由） |
 | `/static/*`                               | GET  | 静态资源（CSS/JS）   |
+| `/api/v1/config/theme`                   | GET  | 获取当前前端主题 |
+| `/api/v1/config/theme`                   | POST | 切换前端主题 |
+| `/api/v1/config/themes`                  | GET  | 获取可用主题列表 |
+| `/favicon.ico`                           | GET  | 浏览器图标 |
 | `/api/v1/sse/tasks`                       | GET  | SSE 实时任务推送     |
 | `/api/v1/config`                          | GET  | 获取系统配置（脱敏）  |
 | `/api/v1/config/raw`                      | GET  | 获取原始配置文件内容  |

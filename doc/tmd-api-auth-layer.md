@@ -337,8 +337,6 @@ func deriveJWTSecret(apiKey string) []byte {
 
 ### Claims 验证规则
 
-**代码位置**：`internal/api/auth_jwt.go:60-77`
-
 ```go
 func validateSessionToken(tokenString string, apiKey string) (*jwt.Token, error) {
     secret := deriveJWTSecret(apiKey)
@@ -348,12 +346,15 @@ func validateSessionToken(tokenString string, apiKey string) (*jwt.Token, error)
         }
         return secret, nil
     },
-        jwt.WithIssuer(jwtIssuer),        // "tmd"
-        jwt.WithSubject(jwtSubject),       // "tmd-session"
-        jwt.WithLeeway(30*time.Second),    // 时钟偏差容忍
-        jwt.WithValidMethods([]string{"HS256"}), // alg 白名单
+        jwt.WithIssuer(jwtIssuer),
+        jwt.WithSubject(jwtSubject),
+        jwt.WithLeeway(30*time.Second),
+        jwt.WithValidMethods([]string{"HS256"}),
     )
-    return token, err
+    if err != nil {
+        return nil, err
+    }
+    return token, nil
 }
 ```
 
@@ -398,23 +399,22 @@ Authorization: Bearer <api_key>
 }
 ```
 
-**处理逻辑：**
-
 ```
 handleAuthLogin(w, r):
   ① r.Method != POST → 405
   ② token = extractBearerToken(r)
      if token == "" → token = r.URL.Query().Get("token")
      if token == "" → 401 "unauthorized"
-  ③ clientAddr = clientIP(r.RemoteAddr)  // net.SplitHostPort 提取纯 IP
-  ④ if !s.authRateLimit.Allow(clientAddr) → 429 "too many requests"
-  ⑤ s.configMu.RLock(); apiKey = s.config.APIKey; s.configMu.RUnlock()
-     if apiKey == "" → 401 (认证未配置)
-  ⑥ if token != apiKey:
+  ③ s.configMu.RLock(); apiKey = s.config.APIKey; s.configMu.RUnlock()
+     if apiKey == "" → 401（认证未配置，不消耗限流配额）
+  ④ clientAddr = clientIP(r.RemoteAddr)
+     if !s.authRateLimit.Allow(clientAddr) → 429 "too many requests"
+  ⑤ if token != apiKey:
        s.authRateLimit.Fail(clientAddr)
+       log.Warnf("[auth] Failed login attempt from %s", clientAddr)
        401 "unauthorized"
-  ⑦ jwtToken = generateSessionToken(apiKey)
-  ⑧ return { token, expires_at, expires_in }
+  ⑥ jwtToken = generateSessionToken(apiKey)
+  ⑦ return { token, expires_at, expires_in }
 ```
 
 ### `/api/v1/auth/refresh` — 刷新端点
@@ -452,21 +452,23 @@ handleAuthRefresh(w, r):
 
 ### `/api/v1/auth/check` — 检查端点
 
-**代码位置**：`internal/api/auth_jwt.go:200-247`
+**代码位置**：`internal/api/auth_jwt.go:208-286`
 
 **认证**：🔒 非公开，与 refresh 相同特殊处理
 
+**请求：**
 ```http
 GET /api/v1/auth/check
 Authorization: Bearer <jwt_token>
 ```
 
-**有效 JWT 响应：**
+**有效 JWT 响应（API Key 已配置）：**
 ```json
 {
   "success": true,
   "data": {
     "authenticated": true,
+    "auth_enabled": true,
     "valid": true,
     "expires_at": "2026-06-25T12:00:00Z",
     "expires_in": 3550,
@@ -477,12 +479,24 @@ Authorization: Bearer <jwt_token>
 
 **`needs_refresh` 字段**：当剩余时间小于 `jwtRefreshMargin`（5 分钟）时为 `true`，提示前端主动刷新。
 
-**无 token 响应：**
+**无 token 但 API Key 已配置：**
 ```json
 {
   "success": true,
   "data": {
-    "authenticated": false
+    "authenticated": false,
+    "auth_enabled": true
+  }
+}
+```
+
+**API Key 未配置（认证未启用）：**
+```json
+{
+  "success": true,
+  "data": {
+    "authenticated": false,
+    "auth_enabled": false
   }
 }
 ```
@@ -493,13 +507,15 @@ Authorization: Bearer <jwt_token>
   "success": true,
   "data": {
     "authenticated": false,
+    "auth_enabled": true,
     "valid": false,
     "expired": true,
-    "error": "token has invalid claims: token is expired"
+    "error": "token expired"
   }
 }
 ```
 
+> `error` 字段的值固定为 `"token expired"`（过期）或 `"token invalid"`（签名/格式错误），不回传原始 error 字符串。
 ### 常量定义
 
 **代码位置**：`internal/api/auth_jwt.go:17-23`
@@ -521,14 +537,11 @@ const (
 | `jwtTokenTTL` | `1 * time.Hour` | JWT 有效期（3600 秒） |
 | `jwtRefreshMargin` | `5 * time.Minute` | 前端 proactive refresh 阈值 |
 | `jwtSigningCtx` | `"tmd-jwt-v1"` | HMAC 密钥派生的 context 标识 |
-
----
-
 ## 双模式认证详解
 
 ### authMiddleware 完整决策树
 
-**代码位置**：`internal/api/middleware.go:126-180`
+**代码位置**：`internal/api/middleware.go:124-200`
 
 ```
 authMiddleware(next, w, r):
@@ -545,12 +558,12 @@ authMiddleware(next, w, r):
   ├─ ③ 提取 token:
   │    token = extractBearerToken(r)
   │    token == "" → token = r.URL.Query().Get("token")
-  │    token == "" → writeAuth401(w, "missing"); return
+  │    token == "" → writeAuth401(w, "missing"); return  // 不设 X-Token-Type
   │
   ├─ ④ isAuthManagementPath(r.URL.Path)?
   │   ├─ true: _, err = validateSessionToken(token, apiKey)
   │   │   ├─ err == nil || isJWTExpiredError(err) → next.ServeHTTP ✅
-  │   │   └─ else → writeAuth401(w, "invalid"); return
+  │   │   └─ else → X-Token-Type: invalid; writeAuth401(w, "invalid"); return
   │   └─ false → 继续 ↓
   │
   ├─ ⑤ jwtToken, jwtErr = validateSessionToken(token, apiKey)
@@ -560,32 +573,29 @@ authMiddleware(next, w, r):
   ├─ ⑥ token == apiKey?
   │   └─ true → next.ServeHTTP(w, r) ✅ (原始 Key)
   │
-  └─ ⑦ 401:
+  └─ ⑦ 401 + X-Token-Type:
        if isJWTExpiredError(jwtErr) → X-Token-Type: expired
-       else if isJWTFormat(token) → X-Token-Type: invalid
        else → X-Token-Type: invalid
        writeAuth401(w, "invalid")
 ```
 
 ### 辅助函数
 
-| 函数 | 位置 | 说明 |
-|------|------|------|
-| `isPublicPath(path)` | middleware.go:88-108 | 检查路径是否在公开白名单中 |
-| `isAuthManagementPath(path)` | middleware.go:203-206 | 检查是否为 refresh/check 端点 |
-| `extractBearerToken(r)` | middleware.go:110-116 | 从 `Authorization` 头提取 Bearer token |
-| `isJWTFormat(token)` | middleware.go:197-200 | 检查 token 是否为 JWT 格式（3 段点分隔） |
-| `isJWTExpiredError(err)` | auth_jwt.go:255-257 | 检查错误是否为 JWT 过期 |
-| `writeAuth401(w, tokenType)` | middleware.go:208-214 | 写入统一 401 响应 + `WWW-Authenticate` 头 |
-| `clientIP(remoteAddr)` | auth_jwt.go:260-266 | 从 `host:port` 提取纯 IP |
+| `isPublicPath(path)` | middleware.go:95-106 | 检查路径是否在公开白名单中 |
+| `isAuthManagementPath(path)` | middleware.go:202-204 | 检查是否为 refresh/check 端点 |
+| `extractBearerToken(r)` | middleware.go:109-115 | 从 `Authorization` 头提取 Bearer token |
+| `isJWTExpiredError(err)` | auth_jwt.go:292-294 | 检查错误是否为 JWT 过期 |
+| `writeAuth401(w, tokenType)` | middleware.go:207-212 | 写入统一 401 响应 + `WWW-Authenticate` 头 |
+| `clientIP(remoteAddr)` | auth_jwt.go:282-288 | 从 `host:port` 提取纯 IP |
 
 ### X-Token-Type 响应头
 
 | 值 | 触发条件 | 前端行为 |
 |---------|---------|---------|
-| `missing` | 请求未携带任何 token | 弹出 API Key 输入对话框 |
 | `expired` | JWT 已过期但签名有效 | 调用 `/api/v1/auth/refresh` 续期 |
 | `invalid` | JWT 签名无效/格式错误/Key 不匹配 | 清除本地凭据，弹出认证对话框 |
+
+> **注意**：`writeAuth401` 函数本身不设 `X-Token-Type` 头。该头由 `authMiddleware` 在相应逻辑分支中显式设置。token 为空时不设此头（前端根据响应状态码 401 直接弹出认证框）。
 
 ### 场景对照表
 
@@ -594,13 +604,13 @@ authMiddleware(next, w, r):
 | 1 | 全新客户端 | 无 token | token 为空 → `writeAuth401("missing")` | 弹认证框 |
 | 2 | 有 API Key 无 JWT | `Bearer <api_key>` | JWT 验证失败 → `token == apiKey` → 放行 | ✅ 向后兼容 |
 | 3 | 有有效 JWT | `Bearer <jwt>` | `validateSessionToken` 成功 → 放行 | ✅ 推荐模式 |
-| 4 | JWT 过期 | `Bearer <expired_jwt>` | JWT 验证失败（过期）→ Key 不匹配 → 401 `expired` | 前端 refresh |
-| 5 | JWT 篡改 | `Bearer <tampered_jwt>` | 签名验证失败 → `isJWTFormat` → 401 `invalid` | 弹认证框 |
-| 6 | API Key 变更后旧 JWT | `Bearer <old_jwt>` | 派生密钥不同→签名验证失败→401 `invalid` | 弹认证框，旧 JWT 自动失效 |
+| 4 | JWT 过期 | `Bearer <expired_jwt>` | JWT 验证失败（过期）→ Key 不匹配 → 401 `X-Token-Type: expired` | 前端 refresh |
+| 5 | JWT 篡改 | `Bearer <tampered_jwt>` | 签名验证失败 → 401 `X-Token-Type: invalid` | 弹认证框 |
+| 6 | API Key 变更后旧 JWT | `Bearer <old_jwt>` | 派生密钥不同→签名验证失败→401 `X-Token-Type: invalid` | 弹认证框，旧 JWT 自动失效 |
 | 7 | 认证未配置 | 任何 | `apiKey == ""` → 放行 | ✅ 无认证 |
 | 8 | auth/refresh 有过期 JWT | `Bearer <expired_jwt>` | `isAuthManagementPath` → JWT 签名有效（允许过期）→ 放行 | ✅ handler 签发新 JWT |
-| 9 | auth/refresh 有无效 JWT | `Bearer <tampered>` | `isAuthManagementPath` → 签名无效 → 401 `invalid` | ❌ 拒绝 |
-| 10 | auth/check 无 token | 无 | `isAuthManagementPath` → token 为空 → `writeAuth401("missing")` | 401 |
+| 9 | auth/refresh 有无效 JWT | `Bearer <tampered>` | `isAuthManagementPath` → 签名无效 → 401 `X-Token-Type: invalid` | ❌ 拒绝 |
+| 10 | auth/check 无 token | 无 | token 为空 → `writeAuth401("missing")`（**不设 X-Token-Type**） | 401 |
 | 11 | auth/check 有有效 JWT | `Bearer <jwt>` | `isAuthManagementPath` → JWT 有效 → 放行 | ✅ handler 返回状态 |
 
 ### 前端 401 处理策略
@@ -1298,11 +1308,11 @@ const (
 
 | 文件 | 说明 | 关键行 |
 |------|------|--------|
-| `internal/api/middleware.go` | `authMiddleware()` 双模式认证、`isPublicPath()` 白名单、`extractBearerToken()` token提取、`writeAuth401()` 401响应、`isAuthManagementPath()` 特殊路径 | 126-180 |
+| `internal/api/middleware.go` | `authMiddleware()` 双模式认证、`isPublicPath()` 白名单、`extractBearerToken()` token提取、`writeAuth401()` 401响应、`isAuthManagementPath()` 特殊路径 | 124-200 |
 | `internal/api/auth_jwt.go` | `deriveJWTSecret()` 密钥派生、`generateSessionToken()` 签发、`validateSessionToken()` 验证、`handleAuthLogin/Refresh/Check` 三个 handler、`authRateLimiter` 登录速率限制 | 全部 |
-| `internal/api/server.go` | `Server.authRateLimit` 字段、`buildHandler()` 路由注册和中间件链注入 | 45, 70, 110-114, 215 |
-| `internal/config/config.go` | `Config.APIKey` 字段、`GetFieldDefs()` 注册 api_key、`NormalizeLoadedConf()` 清理空白 | 43, 157-164, 345 |
-| `internal/api/config_handlers.go` | `buildConfigFieldMeta()` api_key UI 映射、`__CLEAR__` sentinel、api_key 变更立即生效提示 | 155-158, 244-252, 281-283 |
+| `internal/api/server.go` | `Server` 结构体、`buildHandler()` 路由注册和中间件链注入 | 26-46, 111-240 |
+| `internal/config/config.go` | `Config.APIKey` 字段、`GetFieldDefs()` 注册 api_key、`NormalizeLoadedConf()` 清理空白 | 43, 157-171, 331 |
+| `internal/api/config_handlers.go` | `buildConfigFieldMeta()` api_key UI 映射、`__CLEAR__` sentinel、api_key 变更立即生效提示 | 155-158, 250-252, 291-303 |
 | `internal/api/handlers.go` | `TMD_DEV=1` 本地 web 目录开发模式 | 26-33 |
 | `internal/api/web/web1/app.js` | web1 JWT 集成：`api.request()`/`_tryRefreshJWT()`/`sseManager._tokenParam()`/`submitAuthKey()`/SSE onerror refresh | 224-305, 410-413, 525-560 |
 | `internal/api/web/web2/app.js` | web2 JWT 集成：`API._fetch()`/`API._tryRefreshJWT()`/`sseApiKey()`/`renderSecurityEditor()`/`submitAuthKey()` | 21-74, 60-73, 444-445 |
@@ -1310,7 +1320,7 @@ const (
 
 ### 单元测试
 
-测试文件：`internal/api/middleware_test.go`（661 行）
+测试文件：`internal/api/middleware_test.go`（1149 行）
 
 #### API Key 基础认证测试（10 个）
 

@@ -2,9 +2,9 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.25.0-blue.svg)](https://go.dev/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
-[![CI/CD](https://github.com/unkmonster/tmd/actions/workflows/go.yml/badge.svg)](.github/workflows/go.yml)
+[![CI/CD](https://github.com/leeexx2001/tmd/actions/workflows/go.yml/badge.svg)](.github/workflows/go.yml)
 
-> **版本**: 3.4.19 | **状态**: 活跃维护 | **许可证**: GPL-3.0
+> **版本**: 3.4.25 | **状态**: 活跃维护 | **许可证**: GPL-3.0
 
 本项目的代码基于 [unkmonster/tmd](https://github.com/unkmonster/tmd) 项目，修改了部分代码，添加了新的功能特性。新增的功能见 [CHANGELOG.md文件](CHANGELOG.md)
 
@@ -61,7 +61,7 @@
 
 **2.1 直接下载（推荐）**
 
-前往 [Release](https://github.com/unkmonster/tmd/releases/latest) 下载对应平台的单文件可执行程序：
+前往 [Release](https://github.com/leeexx2001/tmd/releases/latest) 下载对应平台的单文件可执行程序：
 
 | 平台 | 文件名 |
 |------|--------|
@@ -121,7 +121,7 @@ tmd-windows-amd64.exe
 
 ```bash
 # 克隆项目
-git clone https://github.com/unkmonster/tmd.git
+git clone https://github.com/leeexx2001/tmd.git
 cd tmd
 
 # 编译 Windows 版本
@@ -148,11 +148,11 @@ GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o tmd-macos .
 ```bash
 # Docker Hub
 docker pull leeexx00/tmd:latest
-docker pull leeexx00/tmd:v3.4.19
+docker pull leeexx00/tmd:v3.4.25
 
 # GHCR
 docker pull ghcr.io/leeexx2001/tmd:latest
-docker pull ghcr.io/leeexx2001/tmd:v3.4.19
+ghcr.io/leeexx2001/tmd:v3.4.25
 ```
 
 **推荐方式：使用 docker compose**
@@ -537,15 +537,16 @@ tmd -jsonfile ./search.json -user elonmusk
 
 **`-jsonfile` 输出示例**：
 ```
-[screen_name] 推文文本内容_1234567890 [3/3 succeeded]
-[screen_name] 另一条推文_1234567891 [2/2 succeeded]
-JSON file download completed: 2 success, 0 failed, 5 media
+[cli] Preparing...
+[cli] Completed (main(downloaded=2, Failedtweet=0))
 ```
+
+> 通过 `-dbg` 模式可查看每条推文的处理详情。
 
 **`-jsonfolder` 输出示例**：
 ```
-[jsonfolder] .loongtweet: 8/10 tweets succeeded (2 failed)
-LoongTweet folder download completed: 1 folder(s) processed, 8 succeeded, 2 failed, 15 media
+[cli] Preparing...
+[cli] Completed (main(downloaded=8, Failedtweet=2))
 ```
 
 > 💡 **推荐搭配**：使用 [twitter-web-exporter](https://github.com/prinsss/twitter-web-exporter) 浏览器脚本导出推文或用户列表为 JSON 格式，然后用 `-jsonfile` 或 `-jsonfolder` 参数下载。
@@ -632,6 +633,8 @@ tmd -user elonmusk -no-retry
 | ------------------ | ------ | ----- | -------------------------------- |
 | `-mark-downloaded` | bool   | false | 仅标记用户为已下载，不下载内容                  |
 | `-mark-time`       | string | 当前时间  | 指定标记时间戳，格式：`2006-01-02T15:04:05` |
+
+> **关于 `-mark-time` 格式**：示例中的 `2006-01-02T15:04:05` 是 Go 语言的参考时间格式，表示"年-月-日T时:分:秒"。实际使用时填入具体时间，例如 `2024-01-01T00:00:00` 表示 2024 年 1 月 1 日零时。
 
 ### Profile 下载参数
 
@@ -1340,12 +1343,18 @@ tmd -user elonmusk -dbg
 
 ### 推文下载结果
 
+CLI 模式下，下载完成后的输出示例：
 ```
 users: 3
     - Elon Musk(elonmusk)
     - NASA(NASA)
     - SpaceX(SpaceX)
+[cli] Completed (main(downloaded=164, Failedtweet=2), profile(downloaded=3, failed=0, versionedfile=0))
 ```
+
+字段说明：
+- `main(downloaded, Failedtweet)` — 推文媒体统计：成功下载数、失败推文数（注意 `Failedtweet` 首字母大写）
+- `profile(downloaded, failed, versionedfile)` — Profile 统计：成功数、失败数、版本备份数
 
 ### Profile 下载结果
 
@@ -1371,6 +1380,33 @@ CLI 模式下，标记结果通过日志输出，例如：
 ```
 
 API 模式下，标记结果可以通过任务详情查看（`GET /api/v1/tasks/{task_id}`），包含 `message` 和统计信息。
+
+### 重试结果
+
+重试过程中输出进度：
+
+```
+[cli] Retrying failed tweets (3/10, Failedtweet=1)
+```
+
+重试完成后输出（无剩余失败项）：
+
+```
+[cli] Completed: completed
+```
+
+### 调试模式输出
+
+使用 `-dbg` 模式时可看到详细的下载进度：
+
+```
+[download] Skip non-retriable media: https://... - 403 Forbidden
+[download] Failed to download media: https://... - connection reset
+[batch] Protected users not followed (1, cannot download content):
+[batch]   - Name(@screen_name)
+[batch] User depth exceeds limit: user - depth: 1500
+[twitter] GET https://api.twitter.com/... - 200 OK (1.2s)
+```
 
 ***
 
