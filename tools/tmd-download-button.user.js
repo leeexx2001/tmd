@@ -200,6 +200,7 @@
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'POST',
+                url: url,
                 headers: Object.assign(
                     { 'Content-Type': 'application/json' },
                     getApiKey() ? { 'Authorization': 'Bearer ' + getApiKey() } : {}
