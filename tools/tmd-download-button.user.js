@@ -28,11 +28,23 @@
         return GM_getValue('tmd_api_url', DEFAULT_API_URL);
     }
 
+    function getApiKey() {
+        return GM_getValue('tmd_api_key', '');
+    }
+
     GM_registerMenuCommand('🔧 设置 TMD API 地址', () => {
         const current = getApiUrl();
         const result = prompt('请输入 TMD API 地址：', current);
         if (result !== null && result.trim()) {
             GM_setValue('tmd_api_url', result.trim().replace(/\/+$/, ''));
+        }
+    });
+
+    GM_registerMenuCommand('🔑 设置 TMD API Key', () => {
+        const current = getApiKey();
+        const result = prompt('请输入 TMD API Key（留空则不使用认证）：', current);
+        if (result !== null) {
+            GM_setValue('tmd_api_key', result.trim());
         }
     });
 
@@ -188,8 +200,10 @@
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'POST',
-                url: url,
-                headers: { 'Content-Type': 'application/json' },
+                headers: Object.assign(
+                    { 'Content-Type': 'application/json' },
+                    getApiKey() ? { 'Authorization': 'Bearer ' + getApiKey() } : {}
+                ),
                 data: JSON.stringify({ auto_follow: true }),
                 timeout: 10000,
                 onload(response) {
