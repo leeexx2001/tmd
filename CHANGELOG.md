@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ***
 
+## [v3.5.1] - 2026-06-25
+
+### Fixed
+
+#### web2 错误面板 SyntaxError
+- `updateErrorsPanel()` 函数中孤立 `}` 导致的 `Uncaught SyntaxError: Unexpected token '}'`（app.js:2336）
+- 根因：前次编辑删除了 `if (total === 0)` 提前返回条件语句，但花括号残留，导致 JS 解析器在函数结束时遇到多余 `}`
+- 连带影响：无错误时的提前返回不再有条件保护，`content.innerHTML = ''; return;` 无条件执行，有错误数据时也不渲染错误表格
+- 修复：恢复 `if (!total) { ... }` 保护条件，删除孤立花括号
+
+#### 验证
+- `node -e "new Function(fs.readFileSync('...'))"` — JS 语法验证通过 ✅
+- `go build ./internal/api/...` — embed 编译通过 ✅
+
 ## [v3.5.0] - 2026-06-25
 
 ### Added
