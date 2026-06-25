@@ -64,7 +64,7 @@ func TestHandleSaveConfigFields_ClearsAPIKey(t *testing.T) {
 
 	// __CLEAR__ sentinel 清空 api_key
 	body := `{"fields":{"api_key":"__CLEAR__"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/config/fields", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config/fields", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	server.handleSaveConfigFields(rr, req)
@@ -80,7 +80,7 @@ func TestHandleSaveConfigFields_RejectsMaskedValue(t *testing.T) {
 
 	// 提交掩码值应被拒绝
 	body := `{"fields":{"api_key":"abc•••xyz"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/config/fields", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config/fields", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	server.handleSaveConfigFields(rr, req)
@@ -104,7 +104,7 @@ func TestHandleSaveConfigFields_RejectsShortMaskedValue(t *testing.T) {
 
 	// 短掩码（***）也应被拒绝
 	body := `{"fields":{"api_key":"***"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/config/fields", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config/fields", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	server.handleSaveConfigFields(rr, req)
@@ -119,7 +119,7 @@ func TestHandleSaveConfigFields_APIKeyChangedMessage(t *testing.T) {
 
 	// 修改 api_key → 应返回立即生效消息
 	body := `{"fields":{"api_key":"new-key-5678"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/config/fields", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config/fields", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	server.handleSaveConfigFields(rr, req)
@@ -145,7 +145,7 @@ func TestHandleSaveConfigFields_OtherFieldChangedMessage(t *testing.T) {
 
 	// 修改其他字段（如 max_download_routine）→ 应返回需重启消息
 	body := `{"fields":{"max_download_routine":"10"}}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/config/fields", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/config/fields", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	server.handleSaveConfigFields(rr, req)

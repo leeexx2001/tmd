@@ -7,6 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ***
 
+## [v3.5.0] - 2026-06-25
+
+### Added
+
+#### JWT 会话令牌认证系统
+- **全新 JWT + API Key 双模式认证**: 支持 `api_key` 配置，服务端派生 HMAC-SHA256 密钥签发 JWT；前端自动管理 JWT 生命周期（login → 存储 → 请求注入 → 过期 refresh → 失效重登录）
+- **`POST /api/v1/auth/login`**: 用 API Key 换取 JWT 会话令牌（1h 有效期）
+- **`POST /api/v1/auth/refresh`**: 用 JWT 续期（允许过期 JWT 刷新，避免用户中断工作流）
+- **`GET /api/v1/auth/check`**: 查询当前 JWT 状态和 `auth_enabled` 状态（前端据此决定是否弹出登录框）
+- **`authRateLimiter`**: 登录端点基于 IP 的速率限制（5 次/分钟），防止暴力破解
+- **`authMiddleware`**: 请求级认证拦截——Bearer Token（优先）或 SSE 回退 `?token=` 参数；公开路径白名单（Web UI 页面、健康检查、主题切换、静态资源）
+- **认证管理 UI**: web1/web2 均实现认证对话框、登录表单、JWT 状态显示、手动刷新/登出按钮
+- **自动刷新**: 前端每 45 分钟静默刷新 JWT，SSE 重连前自动预刷新
+- **向后兼容**: `api_key` 为空时完全跳过认证，不改变现有部署行为
+- **详细文档**: `doc/tmd-api-auth-layer.md`（1223 行）完整覆盖认证架构、JWT 规范、双模式策略、SSE 回退、限流设计
+
+#### API 错误响应标准化
+- **统一 `Error` + `Detail` 双字段格式**: 所有 handler 使用 `writeError(w, status, msg)` / `writeErrorDetail(w, status, msg, detail)` 替代零散的 `writeJSON` + 硬编码响应
+- **用户安全**: 不再将 `err.Error()` 直接暴露给客户端；敏感错误详情走 `Detail` 字段（omitempty）
+- **日志绑定**: 每个 `writeError` 前均有对应的 `log.Errorf` 服务端日志记录
+
+#### 前端架构文档
+- `doc/web1-code-conventions.md`（251 行）: 完整记录 web1 的 data-action 事件委托、store 状态管理、CSS 变量系统、XSS 防御约定
+- `doc/web2-code-conventions.md`（206 行）: 完整记录 web2 的函数式风格、API 客户端、toast/esc/btn-ghost 等约定
+
+#### 架构文档
+- `doc/architecture.md`: 开发者架构说明，从 readme.md 拆分
+- `doc/architecture_diagram.md`: ASCII 架构图
+
+### Changed
+
+#### 认证系统演进（从纯 JWT 到双模式）
+- `feat: add API Key authentication layer` — 引入基础 API Key 认证，支持 `Authorization: Bearer` 头和 SSE `?token=` 回退
+- `feat: JWT 会话令牌认证系统` — 完整 JWT 签发/验证/刷新/检查，含 320 行 `auth_jwt.go`
+- `refactor(auth): 纯 JWT 模式 → JWT + API Key 双模式认证` — middleware 同时支持 JWT 和原始 API Key
+- `fix: auth 限流清理 + api_key 表单清空逻辑` — 修复限流未清理、表单清空后旧值残留问题
+- `fix: 恢复误回退的限流清理和 api_key 清空逻辑`
+- `fix(auth,config): handleAuthCheck 方法校验、auth_enabled 字段、api_key 最小长度、补充测试`
+- `docs+fix: 认证文档全面重构 + 限流/SSE/表单多项优化`
+- `refactor: authRateLimiter 优雅停止 + 删除死代码 isJWTFormat`
+
+#### 日志系统一致性审查（36 文件，~300 处修复）
+- 全部日志增加 `[domain]` 前缀：`[auth]`, `[config]`, `[db]`, `[tasks]`, `[download]`, `[batch]`, `[downloader]`, `[twitter]`, `[server]`, `[scheduler]`, `[SSE]`, `[WebUI]` 等
+- 日志首字母大写规范化
+- 日志级别统一：`Errorf`=返回用户的内部错误，`Warnf`=非致命操作失败，`Infof`=状态变化，`Debugf`=输入校验细节
+- `downloader.go`: 11 处 `WithFields` 结构化日志补全前缀和首字母大写
+- `download_service.go`: 补充缺失的 `log.Errorf` 调用，消除"静默错误链"
+- `main.go` 启动日志规范化
+
+#### 错误响应重构（7 handler 文件，~95 处调用）
+- `APIResponse` 结构增加 `Detail` 字段（omitempty）
+- 所有 handler 改用 `writeError`/`writeErrorDetail`/`NewSuccessResponse` 统一方法
+- 前端 web1/web2 适配新响应格式（`j.error` 而非 `j.error || j.message`）
+
+#### Web UI 重构
+- **web1**: 独立安全面板合并至配置编辑页（-193 行死代码）
+- **web1**: DB 类型→API 映射查表合并（80 行替代 153 行重复模式）
+- **web1**: nav-item 迁移到 data-action 事件委托，消除最后的内联 onclick
+- **web**: 批量重复模式合并、CSS 变量迁移、移除 CodeMirror（430 行→231 行）
+- **web1 日志**: auto-scroll 行为优化（Live → Auto-scroll 语义修正）
+- **web2 日志**: 无限滚动分页（`loadMoreLogs` 滚动到顶部加载更早日志）
+- **web2**: 登录认证 helper 共享（`loginWithApiKey`）减少重复代码
+- **主题浮动切换器**: 所有前端右下角 🎨 按钮，运行时热切换 web1/web2
+
+#### SSE / EventBus 架构改进
+- `EventBus.Close()`: 关闭所有活跃订阅者，释放 `httpServer.Shutdown()` 的 30 秒等待
+- SSE 任务/日志 handler: 添加 channel close 检测（`ok` 判断），支持优雅退出
+- SSE 慢消费者保护：队列超 4096 自动关闭订阅者连接
+- 预序列化缓存：同一事件对所有订阅者共享 JSON 字节缓存
+
+#### Scheduler 安全加固
+- `Stop()` 生命周期锁 `lifecycleMu` + 回调去死锁：`ScheduleStatusChangeFunc` 签名增加 `running bool` 参数，避免回调内反向查询 `IsRunning()` 导致的 AB-BA 死锁
+- 所有 `time.NewTicker`/`time.NewTimer` 确认有 `defer Stop()`
+- 触发标志 `Triggering` 在 panic/generation 不匹配时自动释放
+
+### Fixed
+
+#### 认证系统修复
+- `POST /api/v1/config/fields` 测试错误使用 `POST` 方法（应为 `PUT`）— 5 处修复
+- `defaultAuthRateLimiter` 包级变量改为 per-Server 实例，消除多 Server 共用 stopCh 的竞态
+- `setupTestServer` 添加 `authRateLimit.Stop()` 清理，消除测试 goroutine 泄漏
+- config 结构化保存：`api_key` 变更后清除过期 JWT
+- raw YAML 保存：检测 `api_key` 变更后清除过期 JWT
+- Web UI 登录对话框：输入框失焦不清除、空值显示占位符
+
+#### 数据库查询修复
+- `batchLoadNames`: 补充缺失的 `rows.Err()` 检查（`db_handlers.go:524`），防止数据库迭代中错误被静默忽略
+
+#### Web UI 修复
+- SSE 重连后调度页面刷新改用 `refreshSchedulesAfterReconnect`（检查脏状态防止覆盖编辑）
+- `_cookiesLoading`/`_schedulesLoading` 初始值 `true→false`，防止 guard 拦截首次数据加载
+- 日志搜索后自动开启 auto-scroll
+- `log-new-arrived-btn` 空值安全检测
+- CodeMirror 移除后 raw editor 加载一致性修复
+- 配置页面空字段列表交给 `renderConfigForm` 专门处理，不再短路过早
+
+#### 其他修复
+- SSE 长连接阻塞 graceful shutdown 30 秒 -> 修复：EventBus/Hub 优先关闭再关闭 HTTP 服务器
+- `RetryAllFailed`: 修复 SWAP 编辑导致的 `dumperMu` / `Count() 0` guard 被吞
+- `db_handlers`: 恢复 SWAP 编辑丢失的 else-if 过滤分支
+- `download_handlers`: 补全 `buildTaskRunFunc` 失败日志
+- Config 备份文件路径过长时截断处理
+- `nextDailyTrigger` 测试 times 时间顺序修正
+
+### Security
+- API Key 配置保存：拒绝掩码值（`abc•••xyz`/`***`）防止前端误提交占位文本
+- `maskSensitive`/`isMaskedValue`: 敏感字段前端显示掩码，保存时检测并拒绝掩码提交
+- JWT 签名密钥派生：HMAC-SHA256 with domain separation (`tmd-jwt-v1`)，泄漏不影响原始 API Key
+- HMAC 算法白名单：仅允许 HS256，拒绝 `none` 或其他算法
+- 登录端点速率限制：5 次/IP/分钟
+
 ## [v3.4.25] - 2026-06-22
 
 ### Added

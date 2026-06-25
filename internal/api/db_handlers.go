@@ -522,6 +522,9 @@ func (s *Server) batchLoadNames(table, idCol, nameCol string, ids []interface{})
 			names[id] = name
 		}
 	}
+	if err := rows.Err(); err != nil {
+		log.Warnf("[db] batchLoadNames iteration failed: %v", err)
+	}
 	return names
 }
 

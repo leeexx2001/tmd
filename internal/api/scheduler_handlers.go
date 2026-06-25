@@ -469,7 +469,7 @@ func (s *Server) reloadSchedulesLocked(schedulesPath string) error {
 		}
 		if !sched.IsRunning() && hasEnabledScheduleStatus(sched.GetStatuses()) {
 			sched.Start()
-			s.handleScheduleStatusChange(sched.GetStatuses())
+			s.handleScheduleStatusChange(true, sched.GetStatuses())
 		}
 		return nil
 	}
@@ -495,7 +495,7 @@ func (s *Server) reloadSchedulesLocked(schedulesPath string) error {
 	}
 	if !existingSched.IsRunning() && hasEnabledScheduleStatus(existingSched.GetStatuses()) {
 		existingSched.Start()
-		s.handleScheduleStatusChange(existingSched.GetStatuses())
+		s.handleScheduleStatusChange(true, existingSched.GetStatuses())
 	}
 	return nil
 }

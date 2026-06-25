@@ -443,8 +443,8 @@ func TestStatusChangeCallbackCanQuerySchedulerState(t *testing.T) {
 
 	callbackDone := make(chan struct{})
 	var once sync.Once
-	sc.OnStatusChange = func([]ScheduleStatus) {
-		_ = sc.IsRunning()
+	sc.OnStatusChange = func(running bool, _ []ScheduleStatus) {
+		_ = running
 		once.Do(func() { close(callbackDone) })
 	}
 

@@ -36,7 +36,7 @@ var randomIntervalDelay = func(interval time.Duration, entryID string) time.Dura
 	return time.Duration(pos)
 }
 
-type ScheduleStatusChangeFunc func(statuses []ScheduleStatus)
+type ScheduleStatusChangeFunc func(running bool, statuses []ScheduleStatus)
 
 type Scheduler struct {
 	configPath     string
@@ -241,9 +241,9 @@ func (sc *Scheduler) Reload() error {
 			activeCount, _ := sc.startLocked(false)
 			log.Infof("[scheduler] Scheduler recovered with %d active schedules", activeCount)
 		}
-		callback, statusesCopy := sc.statusChangeSnapshot()
+		callback, running, statusesCopy := sc.statusChangeSnapshot()
 		sc.lifecycleMu.Unlock()
-		notifyStatusChange(callback, statusesCopy)
+		notifyStatusChange(callback, running, statusesCopy)
 		return err
 	}
 
@@ -256,9 +256,9 @@ func (sc *Scheduler) Reload() error {
 		log.Infof("[scheduler] Scheduler restarted with %d active schedules", activeCount)
 	}
 
-	callback, statusesCopy := sc.statusChangeSnapshot()
+	callback, running, statusesCopy := sc.statusChangeSnapshot()
 	sc.lifecycleMu.Unlock()
-	notifyStatusChange(callback, statusesCopy)
+	notifyStatusChange(callback, running, statusesCopy)
 	logReloadSummary(entries)
 	return nil
 }
@@ -581,10 +581,10 @@ func (sc *Scheduler) updateStatus(idx int, entry ScheduleEntry, update func(*Sch
 		return false
 	}
 	update(&sc.statuses[idx])
-	callback, statuses := sc.statusChangeSnapshotLocked()
+	callback, running, statuses := sc.statusChangeSnapshotLocked()
 	sc.mu.Unlock()
 
-	notifyStatusChange(callback, statuses)
+	notifyStatusChange(callback, running, statuses)
 	return true
 }
 
@@ -626,10 +626,10 @@ func (sc *Scheduler) releaseAndUpdateStatus(idx int, entry ScheduleEntry, gen in
 	update(&sc.statuses[idx])
 	sc.statuses[idx].Triggering = false
 
-	callback, statuses := sc.statusChangeSnapshotLocked()
+	callback, running, statuses := sc.statusChangeSnapshotLocked()
 	sc.mu.Unlock()
 
-	notifyStatusChange(callback, statuses)
+	notifyStatusChange(callback, running, statuses)
 	return true
 }
 
@@ -654,26 +654,26 @@ func (sc *Scheduler) applyConfig(entries []ScheduleEntry, parsed []*ParsedSchedu
 	sc.mu.Unlock()
 }
 
-func (sc *Scheduler) statusChangeSnapshot() (ScheduleStatusChangeFunc, []ScheduleStatus) {
+func (sc *Scheduler) statusChangeSnapshot() (ScheduleStatusChangeFunc, bool, []ScheduleStatus) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	return sc.statusChangeSnapshotLocked()
 }
 
-func (sc *Scheduler) statusChangeSnapshotLocked() (ScheduleStatusChangeFunc, []ScheduleStatus) {
+func (sc *Scheduler) statusChangeSnapshotLocked() (ScheduleStatusChangeFunc, bool, []ScheduleStatus) {
 	callback := sc.OnStatusChange
 	if callback == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	statuses := make([]ScheduleStatus, len(sc.statuses))
 	copy(statuses, sc.statuses)
-	return callback, statuses
+	return callback, sc.started, statuses
 }
 
-func notifyStatusChange(callback ScheduleStatusChangeFunc, statuses []ScheduleStatus) {
+func notifyStatusChange(callback ScheduleStatusChangeFunc, running bool, statuses []ScheduleStatus) {
 	if callback != nil {
-		callback(statuses)
+		callback(running, statuses)
 	}
 }
 

@@ -67,7 +67,10 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		taskManager:       NewTaskManager(eventBus),
 		shutdownDone:      make(chan struct{}),
 		eventBus:          eventBus,
-		authRateLimit:     defaultAuthRateLimiter,
+		authRateLimit: &authRateLimiter{
+			attempts: make(map[string]*rateLimitEntry),
+			stopCh:   make(chan struct{}),
+		},
 	}
 
 	s.authRateLimit.startCleanupLoop()
@@ -421,14 +424,12 @@ func (s *Server) GracefulShutdown(reason string) {
 	})
 }
 
-func (s *Server) handleScheduleStatusChange(statuses []scheduler.ScheduleStatus) {
+func (s *Server) handleScheduleStatusChange(running bool, statuses []scheduler.ScheduleStatus) {
 	if s.eventBus == nil {
 		return
 	}
-	sched := s.getScheduler()
-	schedulerRunning := sched != nil && sched.IsRunning()
 	s.eventBus.Publish("schedules", map[string]interface{}{
-		"scheduler_running": schedulerRunning,
+		"scheduler_running": running,
 		"entries":           statuses,
 	})
 

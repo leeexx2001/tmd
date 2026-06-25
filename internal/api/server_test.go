@@ -119,6 +119,11 @@ func setupTestServerWithAppRoot(t *testing.T, appRoot string) (*Server, *sqlx.DB
 			server.downloadQueue.CloseAndWait(2 * time.Second)
 		}
 	})
+	t.Cleanup(func() {
+		if server.authRateLimit != nil {
+			server.authRateLimit.Stop()
+		}
+	})
 
 	return server, db
 }

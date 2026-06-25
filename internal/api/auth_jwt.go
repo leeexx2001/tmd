@@ -325,10 +325,6 @@ const (
 	loginWindow     = 1 * time.Minute
 )
 
-var defaultAuthRateLimiter = &authRateLimiter{
-	attempts: make(map[string]*rateLimitEntry),
-	stopCh:   make(chan struct{}),
-}
 
 func (rl *authRateLimiter) Allow(addr string) bool {
 	rl.mu.Lock()
