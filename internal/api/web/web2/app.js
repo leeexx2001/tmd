@@ -2318,11 +2318,12 @@ function updateErrorsPanel() {
   if (badge) {
     badge.textContent = total > 0 ? '\u26A0\uFE0F' : '';
     badge.style.display = total > 0 ? '' : 'none';
-  }
-    if (body) body.classList.add('hidden');
-    content.innerHTML = '';
-    return;
-  }
+	}
+	if (!total) {
+		if (body) body.classList.add('hidden');
+		content.innerHTML = '';
+		return;
+	}
 
   content.innerHTML = `
     <div style="margin-bottom:10px;display:flex;gap:8px">
