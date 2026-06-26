@@ -946,14 +946,16 @@ func (s *downloadServiceImpl) downloadProfile(ctx context.Context, taskID string
 	}
 
 	if avatarFailed > 0 || bannerFailed > 0 {
-		var parts []string
+		var fileParts []string
 		if avatarFailed > 0 {
-			parts = append(parts, fmt.Sprintf("%d avatars", avatarFailed))
+			fileParts = append(fileParts, fmt.Sprintf("%d avatars", avatarFailed))
 		}
 		if bannerFailed > 0 {
-			parts = append(parts, fmt.Sprintf("%d banners", bannerFailed))
+			fileParts = append(fileParts, fmt.Sprintf("%d banners", bannerFailed))
 		}
-		log.Errorf("[download] Profile download: %s failed", strings.Join(parts, ", "))
+		log.Infof("[profile] Download complete: %d/%d users (%s failed)", successCount, len(results), strings.Join(fileParts, ", "))
+	} else if len(results) > 0 {
+		log.Infof("[profile] Download complete: %d/%d users", successCount, len(results))
 	}
 
 	if successCount == 0 && failCount > 0 {

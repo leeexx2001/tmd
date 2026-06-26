@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/jmoiron/sqlx"
+	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 	"github.com/unkmonster/tmd/internal/entity"
 	"github.com/unkmonster/tmd/internal/twitter"
@@ -52,17 +53,20 @@ func (td *TweetDumper) Load(path string) error {
 		return nil
 	}
 	if err != nil {
+		log.Errorf("[download] Failed to open dumper file %s: %v", path, err)
 		return err
 	}
 	defer file.Close()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
+		log.Errorf("[download] Failed to read dumper file %s: %v", path, err)
 		return err
 	}
 	loaded := make(map[int][]*twitter.Tweet)
 	err = json.Unmarshal(data, &loaded)
 	if err != nil {
+		log.Errorf("[download] Failed to parse dumper file %s: %v", path, err)
 		return err
 	}
 
@@ -71,10 +75,10 @@ func (td *TweetDumper) Load(path string) error {
 	}
 	return nil
 }
-
 func (td *TweetDumper) Dump(path string) error {
 	data, err := json.MarshalIndent(td.data, "", "    ")
 	if err != nil {
+		log.Errorf("[download] Failed to marshal dumper data: %v", err)
 		return err
 	}
 	return os.WriteFile(path, data, 0600)
@@ -101,6 +105,7 @@ func (td *TweetDumper) GetTotal(db *sqlx.DB) ([]*TweetInEntity, error) {
 	for k, v := range td.data {
 		e, err := database.GetUserEntity(db, k)
 		if err != nil {
+			log.Errorf("[download] Failed to get user entity %d: %v", k, err)
 			return nil, err
 		}
 		if e == nil {
@@ -225,15 +230,18 @@ func (d *JsonTweetDumper) Load(path string) error {
 		return nil
 	}
 	if err != nil {
+		log.Errorf("[download] Failed to open JSON dumper file %s: %v", path, err)
 		return err
 	}
 	defer file.Close()
 	data, err := io.ReadAll(file)
 	if err != nil {
+		log.Errorf("[download] Failed to read JSON dumper file %s: %v", path, err)
 		return err
 	}
 	var loaded map[string]*JsonDumpEntry
 	if err := json.Unmarshal(data, &loaded); err != nil {
+		log.Errorf("[download] Failed to parse JSON dumper file %s: %v", path, err)
 		return err
 	}
 	for k, v := range loaded {
@@ -246,10 +254,10 @@ func (d *JsonTweetDumper) Load(path string) error {
 	}
 	return nil
 }
-
 func (d *JsonTweetDumper) Dump(path string) error {
 	data, err := json.MarshalIndent(d.data, "", "    ")
 	if err != nil {
+		log.Errorf("[download] Failed to marshal JSON dumper data: %v", err)
 		return err
 	}
 	return os.WriteFile(path, data, 0600)

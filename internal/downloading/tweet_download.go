@@ -448,6 +448,7 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 	if len(pts) == 0 {
 		return nil
 	}
+	log.Infof("[download] Starting batch download for %d tweets", len(pts))
 	maxDownloadRoutine := opts.normalizedMaxDownloadRoutine()
 
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -489,5 +490,6 @@ func BatchDownloadTweet(ctx context.Context, client *resty.Client, skipLoongTwee
 	for pt := range errChan {
 		failedTweets = append(failedTweets, pt)
 	}
+	log.Infof("[download] Batch download complete: %d tweet(s) failed out of %d", len(failedTweets), len(pts))
 	return failedTweets
 }

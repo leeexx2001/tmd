@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/jmoiron/sqlx"
+	log "github.com/sirupsen/logrus"
 	"github.com/unkmonster/tmd/internal/database"
 )
 
@@ -14,15 +15,18 @@ func updateUserLink(lnk *database.UserLink, db *sqlx.DB, path string) error {
 
 	linkpath, err := lnk.Path(db)
 	if err != nil {
+		log.Errorf("[download] Failed to get link path: %v", err)
 		return err
 	}
 	path, err = filepath.Abs(path)
 	if err != nil {
+		log.Errorf("[download] Failed to get absolute path: %v", err)
 		return err
 	}
 
 	linkDir := filepath.Dir(linkpath)
 	if err := os.MkdirAll(linkDir, 0755); err != nil {
+		log.Errorf("[download] Failed to create link directory %s: %v", linkDir, err)
 		return err
 	}
 
@@ -33,6 +37,7 @@ func updateUserLink(lnk *database.UserLink, db *sqlx.DB, path string) error {
 	newlinkpath := filepath.Join(linkDir, name)
 
 	if err = os.RemoveAll(linkpath); err != nil {
+		log.Errorf("[download] Failed to remove old link %s: %v", linkpath, err)
 		return err
 	}
 	if err = ensureUserSymlink(path, newlinkpath); err != nil {
@@ -40,13 +45,12 @@ func updateUserLink(lnk *database.UserLink, db *sqlx.DB, path string) error {
 	}
 
 	if err = database.UpdateUserLink(db, lnk.Id, name); err != nil {
+		log.Errorf("[download] Failed to update user link in database: %v", err)
 		return err
 	}
-
 	lnk.Name = name
 	return nil
 }
-
 func ensureUserSymlink(targetPath, linkPath string) error {
 	if err := os.Symlink(targetPath, linkPath); err != nil {
 		if !os.IsExist(err) {

@@ -240,11 +240,13 @@ func startCaptureSession(h *Hub) (*captureSession, error) {
 
 	stdoutReader, stdoutWriter, err := os.Pipe()
 	if err != nil {
+		log.Errorf("[consolelog] Failed to create stdout pipe: %v", err)
 		return nil, err
 	}
 	stderrReader, stderrWriter, err := os.Pipe()
 	if err != nil {
 		stdoutReader.Close()
+		log.Errorf("[consolelog] Failed to create stderr pipe: %v", err)
 		stdoutWriter.Close()
 		return nil, err
 	}

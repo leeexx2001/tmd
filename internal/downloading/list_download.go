@@ -20,6 +20,7 @@ func syncList(db *sqlx.DB, list *twitter.List) error {
 	}
 	listdb, err := database.GetLst(db, list.Id)
 	if err != nil {
+		log.Errorf("[download] Failed to get list %d: %v", list.Id, err)
 		return err
 	}
 	if listdb == nil {
@@ -31,6 +32,7 @@ func syncList(db *sqlx.DB, list *twitter.List) error {
 func syncListAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.DB, lst twitter.ListBase, dir string, maxLen int, lsm *ListSyncManager) (entities []userInListEntity, members []*twitter.User, err error) {
 	if v, ok := lst.(*twitter.List); ok {
 		if err = syncList(db, v); err != nil {
+			log.Errorf("[download] Failed to sync list %s: %v", lst.Title(), err)
 			return nil, nil, err
 		}
 	}
@@ -38,19 +40,23 @@ func syncListAndGetMembers(ctx context.Context, client *resty.Client, db *sqlx.D
 	expectedTitle := naming.NewListNamingFromBase(lst, maxLen).SanitizedTitle()
 	ent, err := entity.NewListEntity(db, lst.GetId(), dir)
 	if err != nil {
+		log.Errorf("[download] Failed to create list entity for %s: %v", lst.Title(), err)
 		return nil, nil, err
 	}
 	if err = entity.Sync(ent, expectedTitle); err != nil {
+		log.Errorf("[download] Failed to sync list entity for %s: %v", lst.Title(), err)
 		return nil, nil, err
 	}
 
 	membersResult, err := lst.GetMembers(ctx, client)
 	if err != nil {
+		log.Errorf("[download] Failed to get members for list %s: %v", lst.Title(), err)
 		return nil, nil, err
 	}
 
 	eid, err := ent.Id()
 	if err != nil {
+		log.Errorf("[download] Failed to get entity id for list %s: %v", lst.Title(), err)
 		return nil, nil, err
 	}
 

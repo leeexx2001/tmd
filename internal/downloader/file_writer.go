@@ -8,11 +8,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
 )
+
+var tweetIDRe = regexp.MustCompile(`_(\d+(?:\(\d+\))?)\.\w+$`)
 
 type DefaultFileWriter struct {
 	versionManager VersionManager
@@ -160,7 +163,11 @@ func (fw *DefaultFileWriter) atomicWriteFromReader(path string, reader io.Reader
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return 0, fmt.Errorf("failed to create directory %s: %w", dir, err)
 	}
-	tempFile, err := os.CreateTemp(dir, ".tmp_*")
+	pattern := ".tmp_*"
+	if m := tweetIDRe.FindStringSubmatch(filepath.Base(path)); len(m) > 1 {
+		pattern = ".tmp_*_" + m[1]
+	}
+	tempFile, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create temp file: %w", err)
 	}

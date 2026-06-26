@@ -245,11 +245,13 @@ func (pd *ProfileDownloader) Download(ctx context.Context, req DownloadRequest) 
 
 func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, screenName string) (string, error) {
 	if err := database.SyncUser(pd.db, profile.ID, profile.Name, screenName, profile.Protected, 0, true); err != nil {
+		log.Errorf("[profile] Failed to sync user in database: %v", err)
 		return "", err
 	}
 
 	entity, err := database.LocateUserEntity(pd.db, profile.ID, pd.storage.usersBasePath)
 	if err != nil {
+		log.Errorf("[profile] Failed to locate user entity: %v", err)
 		return "", err
 	}
 
@@ -263,17 +265,19 @@ func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, 
 		}
 		userDir := filepath.Join(pd.storage.usersBasePath, expectedTitle)
 		if err := os.MkdirAll(userDir, 0755); err != nil {
+			log.Errorf("[profile] Failed to create user directory %s: %v", userDir, err)
 			return "", err
 		}
 		if err := database.CreateUserEntity(pd.db, entity); err != nil {
+			log.Errorf("[profile] Failed to create user entity: %v", err)
 			return "", err
 		}
 		log.Infoln("[profile] New user directory created:", userDir)
 		return ensureProfileDirs(userDir)
 	}
-
 	oldUserDir, err := entity.Path()
 	if err != nil {
+		log.Errorf("[profile] Failed to get entity path: %v", err)
 		return "", err
 	}
 	if entity.Name == expectedTitle {
@@ -296,9 +300,9 @@ func (pd *ProfileDownloader) syncUserDirectory(profile *ProfileInfo, userTitle, 
 
 	entity.Name = expectedTitle
 	if err := database.UpdateUserEntity(pd.db, entity); err != nil {
+		log.Errorf("[profile] Failed to update user entity: %v", err)
 		return "", err
 	}
-
 	log.Infoln("[profile] User directory renamed:", oldUserDir, "->", newUserDir)
 	return ensureProfileDirs(newUserDir)
 }
@@ -307,6 +311,7 @@ func (pd *ProfileDownloader) DownloadMultiple(ctx context.Context, requests []Do
 	if len(requests) == 0 {
 		return nil
 	}
+	log.Infof("[profile] Starting batch profile download for %d users", len(requests))
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil) // 确保 cancel 在所有情况下都被调用
@@ -332,6 +337,8 @@ func (pd *ProfileDownloader) DownloadMultiple(ctx context.Context, requests []Do
 	}
 
 	wg.Wait()
+	log.Infof("[profile] Batch profile download complete: %d/%d succeeded",
+		completedCount, len(requests))
 	return results
 }
 
@@ -466,7 +473,7 @@ func (pd *ProfileDownloader) downloadFile(ctx context.Context, userTitle, screen
 
 	result, err := pd.downloader.Download(downloadReq)
 	if err != nil {
-		log.Debugln("[profile]", label, "download failed:", screenName, "-", err)
+		log.Debugf("[profile] %s download failed for %s: %v", label, screenName, err)
 		return FileResult{FileType: fileType, FilePath: filePath, Status: StatusFailed, Error: err}
 	}
 
@@ -505,6 +512,7 @@ func (pd *ProfileDownloader) saveContent(userTitle string, fileType FileType, da
 
 	result, err := pd.fileWriter.Write(writeReq)
 	if err != nil {
+		log.Errorf("[profile] Failed to write %s file: %v", fileType, err)
 		return FileResult{FileType: fileType, FilePath: filePath, Status: StatusFailed, Error: err}
 	}
 

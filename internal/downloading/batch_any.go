@@ -39,6 +39,7 @@ func BatchDownloadAny(ctx context.Context, client *resty.Client, db *sqlx.DB, li
 			defer wg.Done()
 			res, members, e := syncListAndGetMembers(ctx, client, db, lst, dir, opts.normalizedMaxFileNameLen(), lsm)
 			if e != nil {
+				log.Errorf("[batch] Failed to sync list %s: %v", lst.Title(), e)
 				cancel(e)
 				return
 			}

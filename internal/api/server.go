@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -242,12 +243,27 @@ func (s *Server) buildHandler() http.Handler {
 	return handler
 }
 
+
+// getPrimaryIP 通过 UDP 连接获取主网卡 IP（不发送数据包、无网络开销）
+// OS 路由表自动选择默认网关路由的网卡，过滤掉所有虚拟网卡
+func getPrimaryIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
 func (s *Server) Start(port int) error {
 	handler := s.buildHandler()
 
 	addr := fmt.Sprintf(":%d", port)
-	log.Infoln("API server starting on", addr)
-	log.Infof("Visit %s to get started", color.FgLightBlue.Render(fmt.Sprintf("http://localhost%s/", addr)))
+	log.Infof("[server] API server starting on %s", addr)
+	blue := color.FgLightBlue.Render
+	log.Infof("[server] Visit %s to get started", blue("http://localhost"+addr+"/"))
+	if lanIP := getPrimaryIP(); lanIP != "" {
+		log.Infof("[server] Visit %s to get started", blue("http://"+lanIP+addr+"/"))
+	}
 
 	s.httpServer = &http.Server{
 		Addr:        addr,

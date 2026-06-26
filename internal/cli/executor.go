@@ -102,6 +102,7 @@ func (s cliTaskSelection) shouldWarnExclusiveMode(mode cliTaskMode) bool {
 // Execute 执行 CLI 命令
 func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 	if deps == nil {
+		log.Errorf("[cli] dependencies is nil")
 		return fmt.Errorf("dependencies is nil")
 	}
 
@@ -127,7 +128,9 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 	if downloadService == nil {
 		var err error
 		downloadService, err = service.NewDownloadService(&deps.Dependencies)
+
 		if err != nil {
+			log.Errorf("[cli] Failed to create download service: %v", err)
 			return fmt.Errorf("failed to create download service: %w", err)
 		}
 	}
@@ -162,23 +165,33 @@ func Execute(ctx context.Context, args []string, deps *Dependencies) error {
 		if selection.shouldWarnExclusiveMode(cliTaskModeJSONFile) {
 			log.Warn("-jsonfile is exclusive; jsonfolder/mark-downloaded/batch/profile will be ignored")
 		}
-		return downloadService.JsonFileDownload(ctx, "cli", cfg.JsonFileArgs.GetPaths(), cfg.NoRetry, reporter)
+		if err := downloadService.JsonFileDownload(ctx, "cli", cfg.JsonFileArgs.GetPaths(), cfg.NoRetry, reporter); err != nil {
+			log.Warnf("[cli] JSON file download failed: %v", err)
+			return err
+		}
+		return nil
 	case cliTaskModeJSONFolder:
 		log.Infof("jsonfolder: %d folders", len(cfg.JsonFolderArgs.GetPaths()))
 		if selection.shouldWarnExclusiveMode(cliTaskModeJSONFolder) {
 			log.Warn("-jsonfolder is exclusive; jsonfile/mark-downloaded/batch/profile will be ignored")
 		}
-		return downloadService.JsonFolderDownload(ctx, "cli", cfg.JsonFolderArgs.GetPaths(), cfg.NoRetry, reporter)
+		if err := downloadService.JsonFolderDownload(ctx, "cli", cfg.JsonFolderArgs.GetPaths(), cfg.NoRetry, reporter); err != nil {
+			log.Warnf("[cli] JSON folder download failed: %v", err)
+			return err
+		}
+		return nil
 	case cliTaskModeMarkDownloaded:
 		log.Infoln("mark downloaded mode")
 		if selection.shouldWarnExclusiveMode(cliTaskModeMarkDownloaded) {
 			log.Warn("-mark-downloaded is exclusive; profile download parameters will be ignored")
 		}
-		log.Infof("mark downloaded: users: %d, lists: %d, following: %d",
-			len(cfg.UsrArgs.ScreenName), len(cfg.ListArgs.ID), len(cfg.FollArgs.ScreenName))
-		return downloadService.MarkDownloaded(ctx, "cli",
+		if err := downloadService.MarkDownloaded(ctx, "cli",
 			cfg.UsrArgs.ScreenName, cfg.ListArgs.ID, cfg.FollArgs.ScreenName,
-			markTime, reporter)
+			markTime, reporter); err != nil {
+			log.Warnf("[cli] Mark downloaded failed: %v", err)
+			return err
+		}
+		return nil
 	}
 
 	// 4. 批量下载（包含用户、列表、关注）- 第四优先级
