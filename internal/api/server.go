@@ -16,7 +16,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/rs/cors"
 	log "github.com/sirupsen/logrus"
-
+	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
 	"github.com/unkmonster/tmd/internal/downloading"
@@ -43,6 +43,8 @@ type Server struct {
 	schedulerMu       sync.RWMutex
 	scheduler         *scheduler.Scheduler
 	eventBus          *EventBus
+	botCallbacks      map[string]http.HandlerFunc
+	botManager        *bot.BotManager
 	authRateLimit     *authRateLimiter
 }
 
@@ -67,6 +69,7 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 		logHub:            logHub,
 		taskManager:       NewTaskManager(eventBus),
 		shutdownDone:      make(chan struct{}),
+		botCallbacks:     make(map[string]http.HandlerFunc),
 		eventBus:          eventBus,
 		authRateLimit: &authRateLimiter{
 			attempts: make(map[string]*rateLimitEntry),
@@ -94,6 +97,8 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 	s.downloadService = downloadService
 	s.downloadQueue = NewDownloadQueue(s)
 
+	s.botManager = bot.NewBotManager()
+
 	schedulesPath := filepath.Join(appRootPath, "schedules.yaml")
 	sched, err := scheduler.New(schedulesPath, s.scheduledDownload)
 	if err != nil {
@@ -111,6 +116,30 @@ func (s *Server) getScheduler() *scheduler.Scheduler {
 	defer s.schedulerMu.RUnlock()
 	return s.scheduler
 }
+
+// InitBot 注入 BotManager。在 Start() 之前调用。
+func (s *Server) InitBot(bm *bot.BotManager) {
+	if bm != nil {
+		s.botManager = bm
+	}
+}
+
+// RegisterBotCallback 注册 bot 平台的 HTTP 回调路由。在 Start() 之前调用。
+func (s *Server) RegisterBotCallback(pattern string, handler http.HandlerFunc) {
+	s.botCallbacks[pattern] = handler
+}
+
+// TaskManager 返回任务管理器（用于 bot 集成）
+func (s *Server) TaskManager() *TaskManager { return s.taskManager }
+
+// EventBus 返回事件总线（用于 bot 集成）
+func (s *Server) EventBus() *EventBus { return s.eventBus }
+
+// LogHub 返回控制台日志 Hub（用于 bot 集成）
+func (s *Server) LogHub() *consolelog.Hub { return s.logHub }
+
+// DownloadService 返回下载服务（用于 bot 集成）
+func (s *Server) DownloadService() service.DownloadService { return s.downloadService }
 
 func (s *Server) buildHandler() http.Handler {
 	mux := http.NewServeMux()
@@ -217,6 +246,12 @@ func (s *Server) buildHandler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/schedules/{id}/enabled", s.handleSetScheduleEnabled)
 	mux.HandleFunc("POST /api/v1/schedules/{id}/trigger", s.handleTriggerSchedule)
 
+	// 注册 bot 平台的 HTTP 回调路由
+	for pattern, cb := range s.botCallbacks {
+		mux.HandleFunc(pattern, cb)
+	}
+
+
 	var handler http.Handler = mux
 
 	// authMiddleware 在 CORS 内层：OPTIONS 预检请求由 CORS 直接处理，不经过 auth。
@@ -275,6 +310,8 @@ func (s *Server) Start(port int) error {
 	if sched := s.getScheduler(); sched != nil {
 		sched.Start()
 	}
+
+	s.botManager.Start()
 
 	return s.httpServer.ListenAndServe()
 }
@@ -394,6 +431,8 @@ func (s *Server) GracefulShutdown(reason string) {
 		if sched := s.getScheduler(); sched != nil {
 			sched.Stop()
 		}
+
+		s.botManager.Stop()
 
 		// Close SSE connections so httpServer.Shutdown() doesn't wait 30s for them.
 		if s.eventBus != nil {

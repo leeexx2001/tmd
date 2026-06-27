@@ -35,12 +35,52 @@ type Cookie struct {
 }
 
 type Config struct {
-	RootPath           string `yaml:"root_path"`
-	Cookie             Cookie `yaml:"cookie"`
-	MaxDownloadRoutine int    `yaml:"max_download_routine"`
-	MaxFileNameLen     int    `yaml:"max_file_name_len"`
-	ProxyURL           string `yaml:"proxy_url"`
-	APIKey             string `yaml:"api_key"`
+	RootPath           string      `yaml:"root_path"`
+	Cookie             Cookie      `yaml:"cookie"`
+	MaxDownloadRoutine int         `yaml:"max_download_routine"`
+	MaxFileNameLen     int         `yaml:"max_file_name_len"`
+	ProxyURL           string      `yaml:"proxy_url"`
+	APIKey             string      `yaml:"api_key"`
+	Bot                *BotConfig  `yaml:"bot,omitempty"`
+}
+type BotConfig struct {
+	Telegram *TelegramBotConfig  `yaml:"telegram,omitempty"`
+	Discord  *DiscordBotConfig   `yaml:"discord,omitempty"`
+	Gotify   *GotifyBotConfig    `yaml:"gotify,omitempty"`
+	Pushover *PushoverBotConfig  `yaml:"pushover,omitempty"`
+	WeChat   *WeChatBotConfig    `yaml:"wechat,omitempty"`
+	Feishu   *FeishuBotConfig    `yaml:"feishu,omitempty"`
+}
+type TelegramBotConfig struct {
+	Token        string  `yaml:"token"`
+	AllowedUsers []int64 `yaml:"allowed_users"`
+}
+type DiscordBotConfig struct {
+	Token        string   `yaml:"token"`
+	AllowedUsers []string `yaml:"allowed_users"`
+}
+type GotifyBotConfig struct {
+	ServerURL string `yaml:"server_url"`
+	Token     string `yaml:"token"`
+	Priority  int    `yaml:"priority,omitempty"`
+}
+type PushoverBotConfig struct {
+	User   string `yaml:"user"`
+	Token  string `yaml:"token"`
+	Device string `yaml:"device,omitempty"`
+	Sound  string `yaml:"sound,omitempty"`
+}
+type WeChatBotConfig struct {
+	CredentialPath string   `yaml:"credential_path"`
+	AllowedUsers   []string `yaml:"allowed_users"`
+}
+type FeishuBotConfig struct {
+	AppID        string   `yaml:"app_id"`
+	AppSecret    string   `yaml:"app_secret"`
+	VerifyToken  string   `yaml:"verify_token"`
+	EncryptKey   string   `yaml:"encrypt_key,omitempty"`
+	AllowedUsers []string `yaml:"allowed_users"`
+	CallbackPath string   `yaml:"callback_path,omitempty"`
 }
 
 // FieldDef 字段定义，包含 getter/setter 实现双向绑定
@@ -350,6 +390,31 @@ func NormalizeLoadedConf(conf *Config) error {
 	conf.MaxFileNameLen = normalizeInt(conf.MaxFileNameLen, 0, MinFileNameLen, MaxFileNameLen)
 
 	conf.APIKey = strings.TrimSpace(conf.APIKey)
+	if conf.Bot != nil {
+		if conf.Bot.Telegram != nil {
+			conf.Bot.Telegram.Token = strings.TrimSpace(conf.Bot.Telegram.Token)
+		}
+		if conf.Bot.Discord != nil {
+			conf.Bot.Discord.Token = strings.TrimSpace(conf.Bot.Discord.Token)
+		}
+		if conf.Bot.Gotify != nil {
+			conf.Bot.Gotify.Token = strings.TrimSpace(conf.Bot.Gotify.Token)
+			conf.Bot.Gotify.ServerURL = strings.TrimSpace(conf.Bot.Gotify.ServerURL)
+		}
+		if conf.Bot.Pushover != nil {
+			conf.Bot.Pushover.Token = strings.TrimSpace(conf.Bot.Pushover.Token)
+			conf.Bot.Pushover.User = strings.TrimSpace(conf.Bot.Pushover.User)
+		}
+		if conf.Bot.WeChat != nil {
+			conf.Bot.WeChat.CredentialPath = strings.TrimSpace(conf.Bot.WeChat.CredentialPath)
+		}
+		if conf.Bot.Feishu != nil {
+			conf.Bot.Feishu.AppID = strings.TrimSpace(conf.Bot.Feishu.AppID)
+			conf.Bot.Feishu.AppSecret = strings.TrimSpace(conf.Bot.Feishu.AppSecret)
+			conf.Bot.Feishu.VerifyToken = strings.TrimSpace(conf.Bot.Feishu.VerifyToken)
+		}
+	}
+
 
 	return nil
 }

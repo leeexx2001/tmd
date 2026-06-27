@@ -20,6 +20,13 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
+	"github.com/unkmonster/tmd/internal/bot/discord"
+	"github.com/unkmonster/tmd/internal/bot/gotify"
+	"github.com/unkmonster/tmd/internal/bot/pushover"
+	"github.com/unkmonster/tmd/internal/bot/wechat"
+	"github.com/unkmonster/tmd/internal/bot/feishu"
+	"github.com/unkmonster/tmd/internal/bot/telegram"
 	"github.com/unkmonster/tmd/internal/cli"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
@@ -372,6 +379,9 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 	defer signal.Stop(sigChan)
 	startServerSignalHandler(sigChan, server.GracefulShutdown)
 
+	// Bot 初始化
+	server.InitBot(initBot(conf, server))
+
 	err = server.Start(port)
 	if err != nil && err != http.ErrServerClosed {
 		log.Fatalln("[startup] Failed to start server:", err)
@@ -388,4 +398,32 @@ func startServerSignalHandler(sigChan <-chan os.Signal, shutdown func(string)) {
 		// SIGKILL 无法捕获；这里只处理可拦截的退出信号，确保数据库等资源优雅关闭。
 		shutdown("signal:" + sig.String())
 	}()
+}
+
+func initBot(conf *config.Config, server *api.Server) *bot.BotManager {
+	if conf.Bot == nil {
+		return nil
+	}
+	var bots []bot.Bot
+	if conf.Bot.Telegram != nil && conf.Bot.Telegram.Token != "" {
+		bots = append(bots, telegram.NewBot(conf.Bot.Telegram, server.TaskManager(), server.EventBus(), server.LogHub()))
+	}
+	if conf.Bot.Discord != nil && conf.Bot.Discord.Token != "" {
+		bots = append(bots, discord.NewBot(conf.Bot.Discord, server.TaskManager(), server.EventBus(), server.LogHub()))
+	}
+	if conf.Bot.Gotify != nil && conf.Bot.Gotify.Token != "" && conf.Bot.Gotify.ServerURL != "" {
+		bots = append(bots, gotify.NewBot(conf.Bot.Gotify, server.EventBus(), server.LogHub()))
+	}
+	if conf.Bot.Pushover != nil && conf.Bot.Pushover.Token != "" && conf.Bot.Pushover.User != "" {
+		bots = append(bots, pushover.NewBot(conf.Bot.Pushover, server.EventBus(), server.LogHub()))
+	}
+	if conf.Bot.WeChat != nil && conf.Bot.WeChat.CredentialPath != "" {
+		bots = append(bots, wechat.NewBot(conf.Bot.WeChat, server.TaskManager(), server.EventBus(), server.LogHub()))
+	}
+	if conf.Bot.Feishu != nil && conf.Bot.Feishu.AppID != "" && conf.Bot.Feishu.AppSecret != "" {
+		feishuBot := feishu.NewBot(conf.Bot.Feishu, server.TaskManager(), server.EventBus(), server.LogHub())
+		server.RegisterBotCallback(feishuBot.CallbackPath(), feishuBot.CallbackHandler())
+		bots = append(bots, feishuBot)
+	}
+	return bot.NewBotManager(bots...)
 }
