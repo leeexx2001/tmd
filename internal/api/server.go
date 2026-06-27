@@ -44,7 +44,7 @@ type Server struct {
 	scheduler         *scheduler.Scheduler
 	eventBus          *EventBus
 	botCallbacks      map[string]http.HandlerFunc
-	botManager        *bot.BotManager
+	bots              []bot.Bot
 	authRateLimit     *authRateLimiter
 }
 
@@ -97,7 +97,6 @@ func NewServerWithConsoleLogHub(client *resty.Client, additionalClients []*resty
 	s.downloadService = downloadService
 	s.downloadQueue = NewDownloadQueue(s)
 
-	s.botManager = bot.NewBotManager()
 
 	schedulesPath := filepath.Join(appRootPath, "schedules.yaml")
 	sched, err := scheduler.New(schedulesPath, s.scheduledDownload)
@@ -117,11 +116,9 @@ func (s *Server) getScheduler() *scheduler.Scheduler {
 	return s.scheduler
 }
 
-// InitBot 注入 BotManager。在 Start() 之前调用。
-func (s *Server) InitBot(bm *bot.BotManager) {
-	if bm != nil {
-		s.botManager = bm
-	}
+// InitBot 注入 Bot 列表。在 Start() 之前调用。
+func (s *Server) InitBot(bots []bot.Bot) {
+	s.bots = bots
 }
 
 // RegisterBotCallback 注册 bot 平台的 HTTP 回调路由。在 Start() 之前调用。
@@ -311,7 +308,13 @@ func (s *Server) Start(port int) error {
 		sched.Start()
 	}
 
-	s.botManager.Start()
+	for _, b := range s.bots {
+		if err := b.Start(); err != nil {
+			log.Errorf("[bot] Failed to start %s: %v", b.Name(), err)
+			continue
+		}
+		log.Infof("[bot] %s started", b.Name())
+	}
 
 	return s.httpServer.ListenAndServe()
 }
@@ -432,7 +435,10 @@ func (s *Server) GracefulShutdown(reason string) {
 			sched.Stop()
 		}
 
-		s.botManager.Stop()
+		for _, b := range s.bots {
+			b.Stop()
+			log.Infof("[bot] %s stopped", b.Name())
+		}
 
 		// Close SSE connections so httpServer.Shutdown() doesn't wait 30s for them.
 		if s.eventBus != nil {

@@ -401,8 +401,8 @@ func convertSourceToTarget(source *sourceTweet) *targetTweet {
 	sourceLegacy := source.Legacy
 
 	targetUserLegacy := targetUserLegacy{
-		BlockedBy:               getBool(sourceUser.RelationshipPerspectives, "blocked_by"),
-		Blocking:                getBool(sourceUser.RelationshipPerspectives, "blocking"),
+		BlockedBy:               getBoolBlockedBy(sourceUser.RelationshipPerspectives),
+		Blocking:                getBoolBlocking(sourceUser.RelationshipPerspectives),
 		CanDm:                   getBoolFromDmPermissions(sourceUser.DmPermissions),
 		CanMediaTag:             getBoolFromMediaPermissions(sourceUser.MediaPermissions),
 		CreatedAt:               sourceUser.Core.CreatedAt,
@@ -413,16 +413,16 @@ func convertSourceToTarget(source *sourceTweet) *targetTweet {
 		FastFollowersCount:      sourceUserLegacy.FastFollowersCount,
 		FavouritesCount:         sourceUserLegacy.FavouritesCount,
 		FollowRequestSent:       sourceUser.FollowRequestSent,
-		FollowedBy:              getBool(sourceUser.RelationshipPerspectives, "followed_by"),
+		FollowedBy:              getBoolFollowedBy(sourceUser.RelationshipPerspectives),
 		FollowersCount:          sourceUserLegacy.FollowersCount,
-		Following:               getBool(sourceUser.RelationshipPerspectives, "following"),
+		Following:               getBoolFollowing(sourceUser.RelationshipPerspectives),
 		FriendsCount:            sourceUserLegacy.FriendsCount,
 		HasCustomTimelines:      sourceUserLegacy.HasCustomTimelines,
 		IsTranslator:            sourceUserLegacy.IsTranslator,
 		ListedCount:             sourceUserLegacy.ListedCount,
 		Location:                getLocation(sourceUser.Location),
 		MediaCount:              sourceUserLegacy.MediaCount,
-		Muting:                  getBool(sourceUser.RelationshipPerspectives, "muting"),
+		Muting:                  getBoolMuting(sourceUser.RelationshipPerspectives),
 		Name:                    sourceUser.Core.Name,
 		NeedsPhoneVerification:  sourceUserLegacy.NeedsPhoneVerification,
 		NormalFollowersCount:    sourceUserLegacy.NormalFollowersCount,
@@ -502,23 +502,39 @@ func convertSourceToTarget(source *sourceTweet) *targetTweet {
 
 // ========== 辅助函数 ==========
 
-func getBool(rp *relationshipPerspectives, field string) bool {
+func getBoolBlockedBy(rp *relationshipPerspectives) bool {
 	if rp == nil {
 		return false
 	}
-	switch field {
-	case "blocked_by":
-		return rp.BlockedBy
-	case "blocking":
-		return rp.Blocking
-	case "followed_by":
-		return rp.FollowedBy
-	case "following":
-		return rp.Following
-	case "muting":
-		return rp.Muting
+	return rp.BlockedBy
+}
+
+func getBoolBlocking(rp *relationshipPerspectives) bool {
+	if rp == nil {
+		return false
 	}
-	return false
+	return rp.Blocking
+}
+
+func getBoolFollowedBy(rp *relationshipPerspectives) bool {
+	if rp == nil {
+		return false
+	}
+	return rp.FollowedBy
+}
+
+func getBoolFollowing(rp *relationshipPerspectives) bool {
+	if rp == nil {
+		return false
+	}
+	return rp.Following
+}
+
+func getBoolMuting(rp *relationshipPerspectives) bool {
+	if rp == nil {
+		return false
+	}
+	return rp.Muting
 }
 
 func getBoolFromDmPermissions(dp *dmPermissions) bool {

@@ -502,50 +502,12 @@ func LoadBotConfig(path string) (*BotConfig, error) {
 	if err := decoder.Decode(conf); err != nil {
 		return nil, err
 	}
-	normalizeBotConfig(conf)
 	return conf, nil
 }
 
 // WriteBotConfig 将 Bot 配置写入 YAML 文件
 func WriteBotConfig(path string, conf *BotConfig) error {
 	return writeYAMLFile(path, conf)
-}
-
-func normalizeBotConfig(conf *BotConfig) {
-	if conf == nil {
-		return
-	}
-	if conf.Telegram != nil {
-		conf.Telegram.Token = strings.TrimSpace(conf.Telegram.Token)
-	}
-	if conf.Discord != nil {
-		conf.Discord.Token = strings.TrimSpace(conf.Discord.Token)
-		for i, id := range conf.Discord.AllowedUsers {
-			conf.Discord.AllowedUsers[i] = strings.TrimSpace(id)
-		}
-	}
-	if conf.Gotify != nil {
-		conf.Gotify.Token = strings.TrimSpace(conf.Gotify.Token)
-		conf.Gotify.ServerURL = strings.TrimSpace(conf.Gotify.ServerURL)
-	}
-	if conf.Pushover != nil {
-		conf.Pushover.Token = strings.TrimSpace(conf.Pushover.Token)
-		conf.Pushover.User = strings.TrimSpace(conf.Pushover.User)
-	}
-	if conf.WeChat != nil {
-		conf.WeChat.CredentialPath = strings.TrimSpace(conf.WeChat.CredentialPath)
-		for i, id := range conf.WeChat.AllowedUsers {
-			conf.WeChat.AllowedUsers[i] = strings.TrimSpace(id)
-		}
-	}
-	if conf.Feishu != nil {
-		conf.Feishu.AppID = strings.TrimSpace(conf.Feishu.AppID)
-		conf.Feishu.AppSecret = strings.TrimSpace(conf.Feishu.AppSecret)
-		conf.Feishu.VerifyToken = strings.TrimSpace(conf.Feishu.VerifyToken)
-		for i, id := range conf.Feishu.AllowedUsers {
-			conf.Feishu.AllowedUsers[i] = strings.TrimSpace(id)
-		}
-	}
 }
 
 func ReadAdditionalCookies(path string) ([]*Cookie, error) {

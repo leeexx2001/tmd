@@ -2,8 +2,6 @@ package bot
 
 import (
 	"strings"
-	"sync"
-	"time"
 )
 
 // Bot 是 bot 平台的通用接口
@@ -34,7 +32,6 @@ func ParseDownloadOptions(raw string) (remaining string, opts DownloadOptions) {
 		return raw, opts
 	}
 	end := len(parts)
-loop:
 	for end > 0 {
 		kv := strings.SplitN(parts[end-1], "=", 2)
 		if len(kv) != 2 || (kv[1] != "true" && kv[1] != "false") {
@@ -50,28 +47,9 @@ loop:
 			opts.SkipProfile = val
 		case "no_retry", "nr":
 			opts.NoRetry = val
-		default:
-			break loop
 		}
 		end--
 	}
 	return strings.Join(parts[:end], " "), opts
 }
 
-// LogThrottle provides simple rate limiting for error log notifications.
-// Allow returns true if at least 1s has passed since the last allowed notification.
-type LogThrottle struct {
-	mu   sync.Mutex
-	last time.Time
-}
-
-func (lt *LogThrottle) Allow() bool {
-	lt.mu.Lock()
-	defer lt.mu.Unlock()
-	now := time.Now()
-	if now.Sub(lt.last) < time.Second {
-		return false
-	}
-	lt.last = now
-	return true
-}

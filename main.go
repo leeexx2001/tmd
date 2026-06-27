@@ -411,7 +411,7 @@ func startServerSignalHandler(sigChan <-chan os.Signal, shutdown func(string)) {
 	}()
 }
 
-func initBot(botConf *config.BotConfig, server *api.Server) *bot.BotManager {
+func initBot(botConf *config.BotConfig, server *api.Server) []bot.Bot {
 	if botConf == nil {
 		return nil
 	}
@@ -436,7 +436,7 @@ func initBot(botConf *config.BotConfig, server *api.Server) *bot.BotManager {
 		server.RegisterBotCallback(feishuBot.CallbackPath(), feishuBot.CallbackHandler())
 		bots = append(bots, feishuBot)
 	}
-	return bot.NewBotManager(bots...)
+	return bots
 }
 
 func writeDefaultBotConfig(path string) error {

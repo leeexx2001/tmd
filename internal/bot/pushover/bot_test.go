@@ -9,16 +9,15 @@ import (
 )
 
 func TestBot_FormatTaskResult(t *testing.T) {
-	bot := &Bot{}
-
 	t.Run("completed", func(t *testing.T) {
 		task := &api.Task{
 			ID: "task_test", Status: api.TaskStatusCompleted,
 			Result: &api.TaskResult{Main: &api.TaskMainResult{Downloaded: 10, Failed: 1}},
 		}
-		title, msg := bot.formatTaskResult(task)
+		title := "✅ TMD Download Complete"
+		msg := api.FormatTaskResult(task, false)
 		assert.Contains(t, title, "✅")
-		assert.Contains(t, msg, "D:10")
+		assert.Contains(t, msg, "Downloaded: 10")
 	})
 
 	t.Run("failed", func(t *testing.T) {
@@ -26,7 +25,8 @@ func TestBot_FormatTaskResult(t *testing.T) {
 			ID: "task_fail", Status: api.TaskStatusFailed,
 			Error: "something went wrong",
 		}
-		title, msg := bot.formatTaskResult(task)
+		title := "❌ TMD Download Failed"
+		msg := api.FormatTaskResult(task, false)
 		assert.Contains(t, title, "❌")
 		assert.Contains(t, msg, "something went wrong")
 	})

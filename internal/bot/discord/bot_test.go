@@ -21,14 +21,12 @@ func TestBot_IsAllowed(t *testing.T) {
 }
 
 func TestBot_FormatTaskResult(t *testing.T) {
-	bot := &Bot{}
-
 	t.Run("completed", func(t *testing.T) {
 		task := &api.Task{
 			ID: "task_test", Status: api.TaskStatusCompleted,
 			Result: &api.TaskResult{Main: &api.TaskMainResult{Downloaded: 10, Failed: 1}},
 		}
-		result := bot.formatTaskResult(task)
+		result := api.FormatTaskResult(task, true)
 		assert.Contains(t, result, "✅")
 		assert.Contains(t, result, "Downloaded: 10")
 	})
@@ -38,7 +36,7 @@ func TestBot_FormatTaskResult(t *testing.T) {
 			ID: "task_fail", Status: api.TaskStatusFailed,
 			Error: "something went wrong",
 		}
-		result := bot.formatTaskResult(task)
+		result := api.FormatTaskResult(task, true)
 		assert.Contains(t, result, "❌")
 		assert.Contains(t, result, "something went wrong")
 	})
@@ -47,7 +45,7 @@ func TestBot_FormatTaskResult(t *testing.T) {
 		task := &api.Task{
 			ID: "task_none", Status: api.TaskStatusCompleted,
 		}
-		result := bot.formatTaskResult(task)
+		result := api.FormatTaskResult(task, true)
 		assert.Contains(t, result, "✅")
 	})
 }

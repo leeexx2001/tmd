@@ -102,6 +102,7 @@ bm.Stop()   // 依次停止所有 bot
 telegram:
   token: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
   allowed_users: [123456789, 987654321]
+```
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -118,6 +119,7 @@ telegram:
 discord:
   token: "MTE5ODk4MjQ2NzE4NTMyMTI5OQ.GnO2X.xxx"
   allowed_users: ["123456789012345678"]
+```
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -132,11 +134,13 @@ discord:
 wechat:
   credential_path: ".weixin-token.json"
   allowed_users: ["friend@im.wechat"]
+```
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
 | `credential_path` | 凭证文件路径（首次登录后自动生成） | 任意可写路径，相对于工作目录 |
 | `allowed_users` | 允许使用的联系人 ID | 启动后向 Bot 发消息，查看服务端日志中的 `FromUserID` |
+
 **首次使用**：启动后 Bot 在后台等待扫码（登录超时 2 分钟），查看服务端日志中的 QR Code URL，用微信扫码登录。后续自动复用凭证。连接断开后 Bot 会自动重连。
 **可用命令**：`/dl [user|list|foll] <target> [opt=val ...]`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
 支持选项同 Telegram。
@@ -151,6 +155,7 @@ feishu:
   encrypt_key: ""                 # 可选，不配置则不加密
   allowed_users: ["ou_xxxxxxxxxxxxx"]
   callback_path: "/api/v1/bot/feishu/callback"   # 可选，默认值
+```
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -179,6 +184,7 @@ gotify:
   server_url: "http://gotify.lan:8080"
   token: "S3cr3tT0k3n"
   priority: 5
+```
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -187,6 +193,7 @@ gotify:
 | `priority` | 通知优先级（可选，默认5） | 5=normal, 8=emergency |
 
 **触发场景**：任务完成/失败时推送标题和摘要；错误日志（error/fatal 级别）推送完整日志行（限速 1 条/秒）。
+
 ### Pushover（单向推送）
 
 ```yaml
@@ -195,6 +202,7 @@ pushover:
   token: "appToken456..."
   device: "iphone"          # 可选
   sound: "gamelan"          # 可选
+```
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -222,6 +230,7 @@ discord:
 gotify:
   server_url: "http://gotify.lan:8080"
   token: "..."
+```
 
 所有开启了通知的平台都会收到任务完成通知。如果需要区分不同平台的通知内容，可以配置不同的参数（如 Pushover 的 `device` 和 `sound`）。
 

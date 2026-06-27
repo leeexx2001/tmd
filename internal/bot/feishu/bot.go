@@ -66,11 +66,11 @@ func (b *Bot) Start() error {
 		cli.EventCallback.ListenCallback(r.Context(), r.Body, w)
 	}
 
-	b.wg.Add(1)
-	go b.handleEvents()
+	api.RunBotEventLoop(b.eventBus, b.stopCh, &b.wg, func(evt api.SSEEvent) {
+		b.notifyTaskChanges(evt.Data)
+	})
 	if b.logHub != nil {
-		b.wg.Add(1)
-		go b.handleLogs()
+		api.RunBotLogLoop(b.logHub, b.stopCh, &b.wg, b.sendLogAlert)
 	}
 
 	log.Infof("[bot-feishu] Started (app_id: %s)", b.config.AppID)
