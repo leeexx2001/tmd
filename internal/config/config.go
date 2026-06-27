@@ -490,11 +490,16 @@ func loadStartupConfig(path string, prompt bool, stderr io.Writer, promptFn func
 	return result, nil
 }
 
-// LoadBotConfig 从 YAML 文件加载 Bot 配置
+// LoadBotConfig 从 YAML 文件加载 Bot 配置（使用 KnownFields 校验未知字段）
 func LoadBotConfig(path string) (*BotConfig, error) {
 	conf := &BotConfig{}
-	err := readYAMLFile(path, conf)
+	data, err := os.ReadFile(path)
 	if err != nil {
+		return nil, err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(conf); err != nil {
 		return nil, err
 	}
 	normalizeBotConfig(conf)
@@ -515,6 +520,9 @@ func normalizeBotConfig(conf *BotConfig) {
 	}
 	if conf.Discord != nil {
 		conf.Discord.Token = strings.TrimSpace(conf.Discord.Token)
+		for i, id := range conf.Discord.AllowedUsers {
+			conf.Discord.AllowedUsers[i] = strings.TrimSpace(id)
+		}
 	}
 	if conf.Gotify != nil {
 		conf.Gotify.Token = strings.TrimSpace(conf.Gotify.Token)
@@ -526,11 +534,17 @@ func normalizeBotConfig(conf *BotConfig) {
 	}
 	if conf.WeChat != nil {
 		conf.WeChat.CredentialPath = strings.TrimSpace(conf.WeChat.CredentialPath)
+		for i, id := range conf.WeChat.AllowedUsers {
+			conf.WeChat.AllowedUsers[i] = strings.TrimSpace(id)
+		}
 	}
 	if conf.Feishu != nil {
 		conf.Feishu.AppID = strings.TrimSpace(conf.Feishu.AppID)
 		conf.Feishu.AppSecret = strings.TrimSpace(conf.Feishu.AppSecret)
 		conf.Feishu.VerifyToken = strings.TrimSpace(conf.Feishu.VerifyToken)
+		for i, id := range conf.Feishu.AllowedUsers {
+			conf.Feishu.AllowedUsers[i] = strings.TrimSpace(id)
+		}
 	}
 }
 
@@ -561,9 +575,7 @@ func readYAMLFile(path string, out interface{}) error {
 	if err != nil {
 		return err
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
-	return decoder.Decode(out)
+	return yaml.Unmarshal(data, out)
 }
 
 func writeYAMLFile(path string, in interface{}) error {

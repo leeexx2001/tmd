@@ -2,10 +2,9 @@ package wechat
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
-
+	"time"
 	log "github.com/sirupsen/logrus"
 	"github.com/SpellingDragon/wechat-robot-go/wechat"
 
@@ -24,8 +23,8 @@ type Bot struct {
 	wechatBot *wechat.Bot
 
 	userTokens map[string]string
+	userTasks  map[string]map[string]struct{}
 	mu         sync.Mutex
-
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
@@ -39,7 +38,7 @@ func NewBot(cfg *config.WeChatBotConfig, tm *api.TaskManager, eb *api.EventBus, 
 		eventBus:    eb,
 		logHub:      lh,
 		userTokens:  make(map[string]string),
-		stopCh:      make(chan struct{}),
+		userTasks:   make(map[string]map[string]struct{}),
 	}
 }
 
@@ -48,18 +47,10 @@ func (b *Bot) Start() error {
 	bot := wechat.NewBot(
 		wechat.WithTokenFile(b.config.CredentialPath),
 	)
+	b.wechatBot = bot
 
 	ctx, cancel := context.WithCancel(context.Background())
 	b.cancel = cancel
-
-	err := bot.Login(ctx, func(qrCode string) {
-		log.Infof("[bot-wechat] QR code URL: %s", qrCode)
-	})
-	if err != nil {
-		return fmt.Errorf("wechat: login failed: %w", err)
-	}
-	b.wechatBot = bot
-	log.Infof("[bot-wechat] Logged in")
 
 	bot.OnMessage(func(ctx context.Context, msg *wechat.Message) error {
 		if !b.isAllowed(msg.FromUserID) {
@@ -82,10 +73,46 @@ func (b *Bot) Start() error {
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
-		bot.Run(ctx)
+		b.runWithReconnect(ctx)
 	}()
 
+	log.Infof("[bot-wechat] Starting (credential: %s)", b.config.CredentialPath)
 	return nil
+}
+
+func (b *Bot) runWithReconnect(ctx context.Context) {
+	for {
+		select {
+		case <-b.stopCh:
+			return
+		default:
+		}
+
+		loginCtx, loginCancel := context.WithTimeout(ctx, 2*time.Minute)
+		err := b.wechatBot.Login(loginCtx, func(qrCode string) {
+			log.Infof("[bot-wechat] QR code URL: %s", qrCode)
+		})
+		loginCancel()
+		if err != nil {
+			log.Warnf("[bot-wechat] Login failed: %v, retrying in 30s...", err)
+			select {
+			case <-b.stopCh:
+				return
+			case <-time.After(30 * time.Second):
+			}
+			continue
+		}
+		log.Infof("[bot-wechat] Logged in")
+
+		b.wechatBot.Run(ctx)
+
+		select {
+		case <-b.stopCh:
+			return
+		case <-time.After(5 * time.Second):
+			log.Warnf("[bot-wechat] Connection lost, reconnecting...")
+		}
+	}
 }
 
 // Stop 停止 bot

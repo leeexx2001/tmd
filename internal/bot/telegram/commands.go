@@ -8,19 +8,20 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
 )
 
 func (b *Bot) cmdStart(msg *tgbotapi.Message) {
-	b.sendText(msg.Chat.ID, "TMD Bot running.\n/dl [user|list|foll] <target> — download\n/status <id> — task status\n/cancel <id> — cancel task\n/tasks — list tasks\n/help — this message")
+	b.sendText(msg.Chat.ID, "TMD Bot running.\n/dl [user|list|foll] <target> [opt=val ...] — download\n  Options: af, sp, nr, fm (auto_follow, skip_profile, no_retry, follow_members)\n/status <id> — task status\n/cancel <id> — cancel task\n/tasks — list tasks\n/help — this message")
 }
-
 func (b *Bot) cmdDownload(msg *tgbotapi.Message) {
 	raw := strings.TrimSpace(msg.CommandArguments())
 	if raw == "" {
-		b.sendText(msg.Chat.ID, "Usage: /dl [user|list|foll] <target>\nDefaults to user if type omitted.\nExamples:\n/dl elonmusk\n/dl list 12345\n/dl foll elonmusk")
+		b.sendText(msg.Chat.ID, "Usage: /dl [user|list|foll] <target> [opt=val ...]\nOptions: auto_follow/af, skip_profile/sp, no_retry/nr, follow_members/fm\nDefaults to user if type omitted.\nExamples:\n/dl elonmusk\n/dl list 12345\n/dl foll elonmusk auto_follow=true")
 		return
 	}
-	dlType, target := parseDLArgs(raw)
+	clean, opts := bot.ParseDownloadOptions(raw)
+	dlType, target := parseDLArgs(clean)
 	if target == "" {
 		b.sendText(msg.Chat.ID, "Usage: /dl [user|list|foll] <target>")
 		return
@@ -34,15 +35,27 @@ func (b *Bot) cmdDownload(msg *tgbotapi.Message) {
 			return
 		}
 		task = b.taskManager.CreateTask(api.TaskTypeListDownload, &api.ListDownloadTaskData{
-			ListID: api.StringUint64(listID),
+			ListID:        api.StringUint64(listID),
+			AutoFollow:    opts.AutoFollow,
+			FollowMembers: opts.FollowMembers,
+			SkipProfile:   opts.SkipProfile,
+			NoRetry:       opts.NoRetry,
 		})
 	case "foll":
 		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, &api.FollowingDownloadTaskData{
-			ScreenName: target,
+			ScreenName:    target,
+			AutoFollow:    opts.AutoFollow,
+			FollowMembers: opts.FollowMembers,
+			SkipProfile:   opts.SkipProfile,
+			NoRetry:       opts.NoRetry,
 		})
 	default:
 		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, &api.UserDownloadTaskData{
-			ScreenName: target,
+			ScreenName:    target,
+			AutoFollow:    opts.AutoFollow,
+			FollowMembers: opts.FollowMembers,
+			SkipProfile:   opts.SkipProfile,
+			NoRetry:       opts.NoRetry,
 		})
 	}
 

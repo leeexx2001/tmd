@@ -9,14 +9,16 @@ import (
 	"github.com/SpellingDragon/wechat-robot-go/wechat"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
 )
 
 func (b *Bot) cmdDownload(ctx context.Context, msg *wechat.Message, args string) {
 	if args == "" {
-		b.wechatBot.Reply(ctx, msg, "Usage: /dl [user|list|foll] <target>\nDefaults to user if type omitted.")
+		b.wechatBot.Reply(ctx, msg, "Usage: /dl [user|list|foll] <target> [opt=val ...]\nOptions: auto_follow/af, skip_profile/sp, no_retry/nr, follow_members/fm")
 		return
 	}
-	dlType, target := parseDLArgs(args)
+	clean, opts := bot.ParseDownloadOptions(args)
+	dlType, target := parseDLArgs(clean)
 	if target == "" {
 		b.wechatBot.Reply(ctx, msg, "Usage: /dl [user|list|foll] <target>")
 		return
@@ -31,17 +33,36 @@ func (b *Bot) cmdDownload(ctx context.Context, msg *wechat.Message, args string)
 			return
 		}
 		task = b.taskManager.CreateTask(api.TaskTypeListDownload, &api.ListDownloadTaskData{
-			ListID: api.StringUint64(listID),
+			ListID:        api.StringUint64(listID),
+			AutoFollow:    opts.AutoFollow,
+			FollowMembers: opts.FollowMembers,
+			SkipProfile:   opts.SkipProfile,
+			NoRetry:       opts.NoRetry,
 		})
 	case "foll":
 		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, &api.FollowingDownloadTaskData{
-			ScreenName: target,
+			ScreenName:    target,
+			AutoFollow:    opts.AutoFollow,
+			FollowMembers: opts.FollowMembers,
+			SkipProfile:   opts.SkipProfile,
+			NoRetry:       opts.NoRetry,
 		})
 	default:
 		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, &api.UserDownloadTaskData{
-			ScreenName: target,
+			ScreenName:    target,
+			AutoFollow:    opts.AutoFollow,
+			FollowMembers: opts.FollowMembers,
+			SkipProfile:   opts.SkipProfile,
+			NoRetry:       opts.NoRetry,
 		})
 	}
+
+	b.mu.Lock()
+	if b.userTasks[msg.FromUserID] == nil {
+		b.userTasks[msg.FromUserID] = make(map[string]struct{})
+	}
+	b.userTasks[msg.FromUserID][task.ID] = struct{}{}
+	b.mu.Unlock()
 	b.wechatBot.Reply(ctx, msg, fmt.Sprintf("📥 Download started for %s\nTask: %s", target, task.ID))
 }
 
@@ -101,7 +122,7 @@ func (b *Bot) cmdTasks(ctx context.Context, msg *wechat.Message) {
 }
 
 func (b *Bot) cmdHelp(ctx context.Context, msg *wechat.Message) {
-	b.wechatBot.Reply(ctx, msg, "TMD Bot\n/dl [user|list|foll] <target> - download\n/status <id> - task status\n/cancel <id> - cancel task\n/tasks - list tasks\n/help - this message")
+	b.wechatBot.Reply(ctx, msg, "TMD Bot\n/dl [user|list|foll] <target> [opt=val ...] - download\n  Options: af, sp, nr, fm (auto_follow, skip_profile, no_retry, follow_members)\n/status <id> - task status\n/cancel <id> - cancel task\n/tasks - list tasks\n/help - this message")
 }
 
 // parseDLArgs 解析 /dl 参数：支持 "user <name>", "list <id>", "foll <name>", 或裸 <name>

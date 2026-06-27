@@ -23,13 +23,13 @@ type Bot struct {
 	cli *lark.Lark
 
 	userChats map[string]string
+	userTasks map[string]map[string]struct{}
 	mu        sync.Mutex
 
 	callbackHandler http.HandlerFunc
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
-	cancel context.CancelFunc
 }
 
 // NewBot 创建飞书 bot 实例
@@ -40,6 +40,7 @@ func NewBot(cfg *config.FeishuBotConfig, tm *api.TaskManager, eb *api.EventBus, 
 		eventBus:    eb,
 		logHub:      lh,
 		userChats:   make(map[string]string),
+		userTasks:   make(map[string]map[string]struct{}),
 		stopCh:      make(chan struct{}),
 	}
 }
@@ -75,12 +76,7 @@ func (b *Bot) Start() error {
 	log.Infof("[bot-feishu] Started (app_id: %s)", b.config.AppID)
 	return nil
 }
-
-// Stop 停止 bot
 func (b *Bot) Stop() {
-	if b.cancel != nil {
-		b.cancel()
-	}
 	close(b.stopCh)
 	b.wg.Wait()
 }

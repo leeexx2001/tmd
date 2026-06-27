@@ -12,6 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/api"
+	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
 )
@@ -23,8 +24,9 @@ type Bot struct {
 	logHub   *consolelog.Hub
 	client   *http.Client
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopCh      chan struct{}
+	wg          sync.WaitGroup
+	logThrottle bot.LogThrottle
 }
 
 // NewBot 创建 Gotify bot 实例
@@ -121,6 +123,9 @@ func (b *Bot) handleLogs() {
 				return
 			}
 			if !strings.Contains(line, "level=error") && !strings.Contains(line, "level=fatal") {
+				continue
+			}
+			if !b.logThrottle.Allow() {
 				continue
 			}
 			b.sendNotification("🔴 TMD Error", line)

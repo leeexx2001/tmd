@@ -106,7 +106,9 @@ telegram:
 | `token` | Bot token | [@BotFather](https://t.me/BotFather) 创建 Bot 后获取 |
 | `allowed_users` | 允许使用的用户 ID（数字） | 向 Bot 发消息 → `https://api.telegram.org/bot<token>/getUpdates` → `message.from.id` |
 
-**可用命令**：`/dl [user\|list\|foll] <target>`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
+**可用命令**：`/dl [user|list|foll] <target> [opt=val ...]`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
+支持选项：`auto_follow`/`af`、`skip_profile`/`sp`、`no_retry`/`nr`、`follow_members`/`fm`
+示例：`/dl elonmusk auto_follow=true skip_profile=true`
 
 ### Discord
 
@@ -120,7 +122,7 @@ discord:
 | `token` | Bot token | [Discord Developer Portal](https://discord.com/developers/applications) → Application → Bot → Reset Token |
 | `allowed_users` | 允许使用的用户 ID（字符串） | Discord 设置 → 高级 → 开发者模式 → 右键用户 → Copy ID |
 
-**可用命令**：`/dl [type:user\|list\|foll] <target>`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
+**可用命令**：`/dl [type:user|list|foll] <target>`（可选参数 auto_follow、skip_profile、no_retry、follow_members）、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
 
 ### WeChat iLink
 
@@ -136,7 +138,8 @@ wechat:
 
 **首次使用**：启动后查看服务端日志中的 QR Code URL，用微信扫码登录。后续自动复用凭证。
 
-**可用命令**：`/dl [user\|list\|foll] <target>`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
+**可用命令**：`/dl [user|list|foll] <target> [opt=val ...]`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
+支持选项同 Telegram。
 
 ### 飞书 / Lark
 
@@ -166,7 +169,8 @@ feishu:
 4. 事件订阅 → 回调地址填写 `https://你的域名/api/v1/bot/feishu/callback`
 5. 版本管理与发布 → 创建版本 → 审核发布
 
-**可用命令**：`/dl [user\|list\|foll] <target>`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
+**可用命令**：`/dl [user|list|foll] <target> [opt=val ...]`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
+支持选项同 Telegram。
 
 ### Gotify（单向推送）
 

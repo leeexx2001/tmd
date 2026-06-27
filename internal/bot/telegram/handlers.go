@@ -17,6 +17,9 @@ func (b *Bot) handleUpdates() {
 			if update.Message == nil || !update.Message.IsCommand() {
 				continue
 			}
+			if update.Message.From == nil {
+				continue // 频道匿名发帖或非用户消息，无法鉴权
+			}
 			if !b.isAllowed(update.Message.From.ID) {
 				b.sendText(update.Message.Chat.ID, "⛔ Unauthorized")
 				continue

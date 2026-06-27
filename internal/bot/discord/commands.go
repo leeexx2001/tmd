@@ -12,16 +12,25 @@ import (
 
 func (b *Bot) cmdDownload(s *discordgo.Session, i *discordgo.InteractionCreate, data discordgo.ApplicationCommandInteractionData) {
 	var dlType, target string
+	var autoFollow, followMembers, skipProfile, noRetry bool
 	for _, opt := range data.Options {
 		switch opt.Name {
 		case "type":
 			dlType = opt.StringValue()
 		case "target":
 			target = opt.StringValue()
+		case "auto_follow":
+			autoFollow = opt.BoolValue()
+		case "follow_members":
+			followMembers = opt.BoolValue()
+		case "skip_profile":
+			skipProfile = opt.BoolValue()
+		case "no_retry":
+			noRetry = opt.BoolValue()
 		}
 	}
 	if target == "" {
-		b.respond(s, i, "Usage: /dl [type:user|list|foll] <target>")
+		b.respond(s, i, "Usage: /dl [type:user|list|foll] <target> [options]")
 		return
 	}
 	if dlType == "" {
@@ -37,15 +46,27 @@ func (b *Bot) cmdDownload(s *discordgo.Session, i *discordgo.InteractionCreate, 
 			return
 		}
 		task = b.taskManager.CreateTask(api.TaskTypeListDownload, &api.ListDownloadTaskData{
-			ListID: api.StringUint64(listID),
+			ListID:        api.StringUint64(listID),
+			AutoFollow:    autoFollow,
+			FollowMembers: followMembers,
+			SkipProfile:   skipProfile,
+			NoRetry:       noRetry,
 		})
 	case "foll":
 		task = b.taskManager.CreateTask(api.TaskTypeFollowingDownload, &api.FollowingDownloadTaskData{
-			ScreenName: target,
+			ScreenName:    target,
+			AutoFollow:    autoFollow,
+			FollowMembers: followMembers,
+			SkipProfile:   skipProfile,
+			NoRetry:       noRetry,
 		})
 	default:
 		task = b.taskManager.CreateTask(api.TaskTypeUserDownload, &api.UserDownloadTaskData{
-			ScreenName: target,
+			ScreenName:    target,
+			AutoFollow:    autoFollow,
+			FollowMembers: followMembers,
+			SkipProfile:   skipProfile,
+			NoRetry:       noRetry,
 		})
 	}
 
@@ -124,7 +145,7 @@ func (b *Bot) cmdTasks(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func (b *Bot) cmdHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	b.respond(s, i, "**TMD Bot**\n/dl [type:user|list|foll] <target> — download\n/status <id> — task status\n/cancel <id> — cancel task\n/tasks — list recent tasks\n/help — this message")
+	b.respond(s, i, "**TMD Bot**\n/dl [type:user|list|foll] <target> [options]\n  Options: auto_follow, skip_profile, no_retry, follow_members\n/status <id> — task status\n/cancel <id> — cancel task\n/tasks — list recent tasks\n/help — this message")
 }
 
 func (b *Bot) respond(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {

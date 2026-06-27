@@ -42,8 +42,17 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 			continue
 		}
 		text := b.formatTaskResult(task)
-		for _, chatID := range b.userChats {
-			b.sendText(chatID, text)
+		for openID, taskIDs := range b.userTasks {
+			if _, ok := taskIDs[task.ID]; !ok {
+				continue
+			}
+			delete(taskIDs, task.ID)
+			if len(taskIDs) == 0 {
+				delete(b.userTasks, openID)
+			}
+			if chatID, ok := b.userChats[openID]; ok {
+				b.sendText(chatID, text)
+			}
 		}
 	}
 }
@@ -79,14 +88,19 @@ func (b *Bot) handleLogs() {
 				continue
 			}
 			b.mu.Lock()
+			chatIDs := make([]string, 0, len(b.userChats))
 			for _, chatID := range b.userChats {
+				chatIDs = append(chatIDs, chatID)
+			}
+			b.mu.Unlock()
+
+			for _, chatID := range chatIDs {
 				ctx := context.Background()
 				_, _, err := b.cli.Message.Send().ToChatID(chatID).SendText(ctx, "🔴 "+line)
 				if err != nil {
 					log.Warnf("[bot-feishu] Failed to send log notification: %v", err)
 				}
 			}
-			b.mu.Unlock()
 		}
 	}
 }

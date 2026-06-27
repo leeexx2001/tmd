@@ -44,15 +44,16 @@ func (b *Bot) handleMessage(ctx context.Context, event *lark.EventV2IMMessageRec
 
 	switch cmd {
 	case "dl", "download":
-		b.cmdDownload(event.Message.MessageID, args)
+		b.cmdDownload(event.Message.MessageID, args, openID)
 	case "status":
 		b.cmdStatus(event.Message.MessageID, args)
 	case "cancel":
 		b.cmdCancel(event.Message.MessageID, args)
 	case "tasks":
 		b.cmdTasks(event.Message.MessageID)
-	case "help":
+	case "start", "help":
 		b.cmdHelp(event.Message.MessageID)
+		
 	default:
 		b.sendReply(event.Message.MessageID, "Unknown command. Send /help for available commands.")
 	}

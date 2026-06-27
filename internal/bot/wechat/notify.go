@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	log "github.com/sirupsen/logrus"
-
 	"github.com/unkmonster/tmd/internal/api"
 )
 
@@ -35,23 +33,23 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	if !ok {
 		return
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
 		}
 		text := b.formatTaskResult(task)
-		b.mu.Lock()
-		userIDs := make([]string, 0, len(b.userTokens))
-		for uid := range b.userTokens {
-			userIDs = append(userIDs, uid)
-		}
-		b.mu.Unlock()
-
-		for _, userID := range userIDs {
-			ctx := context.Background()
-			if err := b.wechatBot.SendTextToUser(ctx, userID, text); err != nil {
-				log.Warnf("[bot-wechat] Failed to send notification to %s: %v", userID, err)
+		for userID, taskIDs := range b.userTasks {
+			if _, ok := taskIDs[task.ID]; !ok {
+				continue
 			}
+			delete(taskIDs, task.ID)
+			if len(taskIDs) == 0 {
+				delete(b.userTasks, userID)
+			}
+			ctx := context.Background()
+			b.sendText(ctx, userID, text)
 		}
 	}
 }
@@ -95,9 +93,7 @@ func (b *Bot) handleLogs() {
 
 			for _, userID := range userIDs {
 				ctx := context.Background()
-				if err := b.wechatBot.SendTextToUser(ctx, userID, "🔴 "+line); err != nil {
-					log.Warnf("[bot-wechat] Failed to send log notification to %s: %v", userID, err)
-				}
+				b.sendText(ctx, userID, "🔴 "+line)
 			}
 		}
 	}
