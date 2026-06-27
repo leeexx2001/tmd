@@ -22,11 +22,11 @@ import (
 	"github.com/unkmonster/tmd/internal/api"
 	"github.com/unkmonster/tmd/internal/bot"
 	"github.com/unkmonster/tmd/internal/bot/discord"
+	"github.com/unkmonster/tmd/internal/bot/feishu"
 	"github.com/unkmonster/tmd/internal/bot/gotify"
 	"github.com/unkmonster/tmd/internal/bot/pushover"
-	"github.com/unkmonster/tmd/internal/bot/wechat"
-	"github.com/unkmonster/tmd/internal/bot/feishu"
 	"github.com/unkmonster/tmd/internal/bot/telegram"
+	"github.com/unkmonster/tmd/internal/bot/wechat"
 	"github.com/unkmonster/tmd/internal/cli"
 	"github.com/unkmonster/tmd/internal/config"
 	"github.com/unkmonster/tmd/internal/consolelog"
@@ -382,7 +382,12 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 	// Bot 初始化
 	botConfPath := filepath.Join(appRootPath, "bot_config.yaml")
 	botConf, err := config.LoadBotConfig(botConfPath)
-	if err != nil {
+	if os.IsNotExist(err) {
+		if writeErr := writeDefaultBotConfig(botConfPath); writeErr != nil {
+			log.Warnf("[startup] Failed to create default bot config: %v", writeErr)
+		}
+		botConf = nil
+	} else if err != nil {
 		log.Warnf("[startup] Failed to load bot config: %v", err)
 	}
 	server.InitBot(initBot(botConf, server))
@@ -431,4 +436,60 @@ func initBot(botConf *config.BotConfig, server *api.Server) *bot.BotManager {
 		bots = append(bots, feishuBot)
 	}
 	return bot.NewBotManager(bots...)
+}
+
+func writeDefaultBotConfig(path string) error {
+	template := `# TMD Bot Configuration
+# Uncomment and configure the platforms you want to use.
+# This file is watched on startup only; changes require a restart.
+
+# --- Telegram ---
+# 1. Create a bot via @BotFather, get the token.
+# 2. Get your user ID by sending a message to the bot, then visit:
+#    https://api.telegram.org/bot<token>/getUpdates → message.from.id
+#telegram:
+#  token: "123456789:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+#  allowed_users: [123456789]
+
+# --- Discord ---
+# 1. Create app at https://discord.com/developers/applications → Bot → Reset Token
+# 2. Enable Developer Mode in Discord → right-click user → Copy ID
+#discord:
+#  token: "MTE5ODk4MjQ2NzE4NTMyMTI5OQ.GnO2X.xxx"
+#  allowed_users: ["123456789012345678"]
+
+# --- WeChat iLink ---
+# Uses personal WeChat account via iLink protocol. Requires QR code scan on first login.
+# credential_path is relative to the working directory; auto-created after login.
+#wechat:
+#  credential_path: ".weixin-token.json"
+#  allowed_users: ["friend@im.wechat"]
+
+# --- Feishu / Lark ---
+# 1. Create app at https://open.feishu.cn/app → get App ID + App Secret
+# 2. Enable Bot capability, add "Receive message v2.0" event
+# 3. Set callback URL to https://your-domain/api/v1/bot/feishu/callback
+#feishu:
+#  app_id: "cli_xxxxxxxxxxxx"
+#  app_secret: "xxxxxxxxxxxxxxxxxxxxxxxxxx"
+#  verify_token: "xxxxxxxxxxxx"
+#  encrypt_key: ""
+#  allowed_users: ["ou_xxxxxxxxxxxxx"]
+
+# --- Gotify (push only, no commands) ---
+# Self-hosted push notification server. Install from https://github.com/gotify/server
+#gotify:
+#  server_url: "http://gotify.lan:8080"
+#  token: "S3cr3tT0k3n"
+#  priority: 5
+
+# --- Pushover (push only, no commands) ---
+# Register at https://pushover.net → get User Key → create Application/API Token
+#pushover:
+#  user: "uKey123..."
+#  token: "appToken456..."
+#  device: "iphone"
+#  sound: "gamelan"
+`
+	return os.WriteFile(path, []byte(template), 0644)
 }
