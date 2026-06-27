@@ -380,7 +380,12 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 	startServerSignalHandler(sigChan, server.GracefulShutdown)
 
 	// Bot 初始化
-	server.InitBot(initBot(conf, server))
+	botConfPath := filepath.Join(appRootPath, "bot_config.yaml")
+	botConf, err := config.LoadBotConfig(botConfPath)
+	if err != nil {
+		log.Warnf("[startup] Failed to load bot config: %v", err)
+	}
+	server.InitBot(initBot(botConf, server))
 
 	err = server.Start(port)
 	if err != nil && err != http.ErrServerClosed {
@@ -400,28 +405,28 @@ func startServerSignalHandler(sigChan <-chan os.Signal, shutdown func(string)) {
 	}()
 }
 
-func initBot(conf *config.Config, server *api.Server) *bot.BotManager {
-	if conf.Bot == nil {
+func initBot(botConf *config.BotConfig, server *api.Server) *bot.BotManager {
+	if botConf == nil {
 		return nil
 	}
 	var bots []bot.Bot
-	if conf.Bot.Telegram != nil && conf.Bot.Telegram.Token != "" {
-		bots = append(bots, telegram.NewBot(conf.Bot.Telegram, server.TaskManager(), server.EventBus(), server.LogHub()))
+	if botConf.Telegram != nil && botConf.Telegram.Token != "" {
+		bots = append(bots, telegram.NewBot(botConf.Telegram, server.TaskManager(), server.EventBus(), server.LogHub()))
 	}
-	if conf.Bot.Discord != nil && conf.Bot.Discord.Token != "" {
-		bots = append(bots, discord.NewBot(conf.Bot.Discord, server.TaskManager(), server.EventBus(), server.LogHub()))
+	if botConf.Discord != nil && botConf.Discord.Token != "" {
+		bots = append(bots, discord.NewBot(botConf.Discord, server.TaskManager(), server.EventBus(), server.LogHub()))
 	}
-	if conf.Bot.Gotify != nil && conf.Bot.Gotify.Token != "" && conf.Bot.Gotify.ServerURL != "" {
-		bots = append(bots, gotify.NewBot(conf.Bot.Gotify, server.EventBus(), server.LogHub()))
+	if botConf.Gotify != nil && botConf.Gotify.Token != "" && botConf.Gotify.ServerURL != "" {
+		bots = append(bots, gotify.NewBot(botConf.Gotify, server.EventBus(), server.LogHub()))
 	}
-	if conf.Bot.Pushover != nil && conf.Bot.Pushover.Token != "" && conf.Bot.Pushover.User != "" {
-		bots = append(bots, pushover.NewBot(conf.Bot.Pushover, server.EventBus(), server.LogHub()))
+	if botConf.Pushover != nil && botConf.Pushover.Token != "" && botConf.Pushover.User != "" {
+		bots = append(bots, pushover.NewBot(botConf.Pushover, server.EventBus(), server.LogHub()))
 	}
-	if conf.Bot.WeChat != nil && conf.Bot.WeChat.CredentialPath != "" {
-		bots = append(bots, wechat.NewBot(conf.Bot.WeChat, server.TaskManager(), server.EventBus(), server.LogHub()))
+	if botConf.WeChat != nil && botConf.WeChat.CredentialPath != "" {
+		bots = append(bots, wechat.NewBot(botConf.WeChat, server.TaskManager(), server.EventBus(), server.LogHub()))
 	}
-	if conf.Bot.Feishu != nil && conf.Bot.Feishu.AppID != "" && conf.Bot.Feishu.AppSecret != "" {
-		feishuBot := feishu.NewBot(conf.Bot.Feishu, server.TaskManager(), server.EventBus(), server.LogHub())
+	if botConf.Feishu != nil && botConf.Feishu.AppID != "" && botConf.Feishu.AppSecret != "" {
+		feishuBot := feishu.NewBot(botConf.Feishu, server.TaskManager(), server.EventBus(), server.LogHub())
 		server.RegisterBotCallback(feishuBot.CallbackPath(), feishuBot.CallbackHandler())
 		bots = append(bots, feishuBot)
 	}

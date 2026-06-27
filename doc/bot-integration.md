@@ -92,16 +92,14 @@ bm.Stop()   // 依次停止所有 bot
 
 ## 配置方式
 
-所有 Bot 配置在 `conf.yaml` 的 `bot:` 下，未配置的平台不会启动。
+所有 Bot 配置在 `{appRootPath}/bot_config.yaml` 中（独立于 `conf.yaml`），未配置的平台不会启动。
 
 ### Telegram
 
 ```yaml
-bot:
-  telegram:
-    token: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
-    allowed_users: [123456789, 987654321]
-```
+telegram:
+  token: "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+  allowed_users: [123456789, 987654321]
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -113,11 +111,9 @@ bot:
 ### Discord
 
 ```yaml
-bot:
-  discord:
-    token: "MTE5ODk4MjQ2NzE4NTMyMTI5OQ.GnO2X.xxx"
-    allowed_users: ["123456789012345678"]
-```
+discord:
+  token: "MTE5ODk4MjQ2NzE4NTMyMTI5OQ.GnO2X.xxx"
+  allowed_users: ["123456789012345678"]
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -129,11 +125,9 @@ bot:
 ### WeChat iLink
 
 ```yaml
-bot:
-  wechat:
-    credential_path: ".weixin-token.json"
-    allowed_users: ["friend@im.wechat"]
-```
+wechat:
+  credential_path: ".weixin-token.json"
+  allowed_users: ["friend@im.wechat"]
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -147,15 +141,13 @@ bot:
 ### 飞书 / Lark
 
 ```yaml
-bot:
-  feishu:
-    app_id: "cli_xxxxxxxxxxxx"
-    app_secret: "xxxxxxxxxxxxxxxxxxxxxxxxxx"
-    verify_token: "xxxxxxxxxxxx"
-    encrypt_key: ""                 # 可选，不配置则不加密
-    allowed_users: ["ou_xxxxxxxxxxxxx"]
-    callback_path: "/api/v1/bot/feishu/callback"   # 可选，默认值
-```
+feishu:
+  app_id: "cli_xxxxxxxxxxxx"
+  app_secret: "xxxxxxxxxxxxxxxxxxxxxxxxxx"
+  verify_token: "xxxxxxxxxxxx"
+  encrypt_key: ""                 # 可选，不配置则不加密
+  allowed_users: ["ou_xxxxxxxxxxxxx"]
+  callback_path: "/api/v1/bot/feishu/callback"   # 可选，默认值
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -179,12 +171,10 @@ bot:
 ### Gotify（单向推送）
 
 ```yaml
-bot:
-  gotify:
-    server_url: "http://gotify.lan:8080"
-    token: "S3cr3tT0k3n"
-    priority: 5
-```
+gotify:
+  server_url: "http://gotify.lan:8080"
+  token: "S3cr3tT0k3n"
+  priority: 5
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -197,13 +187,11 @@ bot:
 ### Pushover（单向推送）
 
 ```yaml
-bot:
-  pushover:
-    user: "uKey123..."
-    token: "appToken456..."
-    device: "iphone"          # 可选
-    sound: "gamelan"          # 可选
-```
+pushover:
+  user: "uKey123..."
+  token: "appToken456..."
+  device: "iphone"          # 可选
+  sound: "gamelan"          # 可选
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
@@ -221,17 +209,16 @@ bot:
 可以同时启用多个平台，互不干扰：
 
 ```yaml
-bot:
-  telegram:
-    token: "..."
-    allowed_users: [123456789]
-  discord:
-    token: "..."
-    allowed_users: ["123456789012345678"]
-  gotify:
-    server_url: "http://gotify.lan:8080"
-    token: "..."
-```
+# bot_config.yaml
+telegram:
+  token: "..."
+  allowed_users: [123456789]
+discord:
+  token: "..."
+  allowed_users: ["123456789012345678"]
+gotify:
+  server_url: "http://gotify.lan:8080"
+  token: "..."
 
 所有开启了通知的平台都会收到任务完成通知。如果需要区分不同平台的通知内容，可以配置不同的参数（如 Pushover 的 `device` 和 `sound`）。
 
