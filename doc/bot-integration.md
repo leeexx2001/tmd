@@ -88,6 +88,8 @@ bm.Stop()   // 依次停止所有 bot
   → notifyTaskChanges() 发送消息给用户
 ```
 
+> **通知范围**：任务完成/失败通知**仅发送给发起该任务的用户**（Telegram 的聊天会话、Discord 频道、WeChat/Feishu 的个人用户）。错误日志（error/fatal 级别）会推送给所有已授权用户。
+
 ---
 
 ## 配置方式
@@ -135,9 +137,7 @@ wechat:
 |---|---|---|
 | `credential_path` | 凭证文件路径（首次登录后自动生成） | 任意可写路径，相对于工作目录 |
 | `allowed_users` | 允许使用的联系人 ID | 启动后向 Bot 发消息，查看服务端日志中的 `FromUserID` |
-
-**首次使用**：启动后查看服务端日志中的 QR Code URL，用微信扫码登录。后续自动复用凭证。
-
+**首次使用**：启动后 Bot 在后台等待扫码（登录超时 2 分钟），查看服务端日志中的 QR Code URL，用微信扫码登录。后续自动复用凭证。连接断开后 Bot 会自动重连。
 **可用命令**：`/dl [user|list|foll] <target> [opt=val ...]`、`/status <id>`、`/cancel <id>`、`/tasks`、`/help`
 支持选项同 Telegram。
 
@@ -186,8 +186,7 @@ gotify:
 | `token` | 应用 Token | Gotify Web UI → Apps → Create Application |
 | `priority` | 通知优先级（可选，默认5） | 5=normal, 8=emergency |
 
-**触发场景**：任务完成/失败时推送标题和摘要；错误日志（error/fatal 级别）推送完整日志行。
-
+**触发场景**：任务完成/失败时推送标题和摘要；错误日志（error/fatal 级别）推送完整日志行（限速 1 条/秒）。
 ### Pushover（单向推送）
 
 ```yaml
@@ -199,12 +198,12 @@ pushover:
 
 | 参数 | 说明 | 获取方式 |
 |---|---|---|
-   | `user` | 用户 Key | [pushover.net](https://pushover.net) 登录后首页显示 |
+| `user` | 用户 Key | [pushover.net](https://pushover.net) 登录后首页显示 |
 | `token` | 应用 API Token | pushover.net → Create an Application/API Token |
 | `device` | 指定设备名（可选） | Pushover App 中设置的设备名称 |
 | `sound` | 通知声音（可选） | [可选值列表](https://pushover.net/api#sounds) |
 
-**触发场景**：同 Gotify。
+**触发场景**：同 Gotify（限速 1 条/秒）。Pushover 免费版每月 7500 条配额，注意控制错误日志量。
 
 ---
 
