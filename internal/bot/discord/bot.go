@@ -75,9 +75,10 @@ func (b *Bot) Stop() {
 	close(b.stopCh)
 	b.wg.Wait()
 	if b.session != nil {
-		b.session.Close()
+		if err := b.session.Close(); err != nil {
+			log.Warnf("[bot-discord] Session close error: %v", err)
+		}
 	}
 }
-
 // Name 返回 bot 名称
 func (b *Bot) Name() string { return "discord" }

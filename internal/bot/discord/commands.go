@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/bwmarrin/discordgo"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/unkmonster/tmd/internal/api"
 )
@@ -127,10 +128,12 @@ func (b *Bot) cmdHelp(s *discordgo.Session, i *discordgo.InteractionCreate) {
 }
 
 func (b *Bot) respond(s *discordgo.Session, i *discordgo.InteractionCreate, content string) {
-	s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
 		Data: &discordgo.InteractionResponseData{
 			Content: content,
 		},
-	})
+	}); err != nil {
+		log.Warnf("[bot-discord] Failed to respond: %v", err)
+	}
 }

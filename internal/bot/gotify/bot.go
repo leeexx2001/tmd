@@ -145,7 +145,7 @@ func (b *Bot) sendNotification(title, message string) {
 		Priority: priority,
 	})
 
-	url := b.config.ServerURL + "/message"
+	url := strings.TrimRight(b.config.ServerURL, "/") + "/message"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
 		log.Warnf("[bot-gotify] Failed to create request: %v", err)
