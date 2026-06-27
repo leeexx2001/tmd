@@ -194,14 +194,14 @@ func (rl *xRateLimit) preRequest(ctx context.Context, nonBlocking bool) error {
 		}
 
 		insurance := 5 * time.Second
-		log.Warnln("[RateLimiter] Sleeping until:", rl.ResetTime.Add(insurance), "- path:", rl.Url)
+		log.Warnf("[RateLimiter] Sleeping until: %s - path: %s", rl.ResetTime.Add(insurance), rl.Url)
 
 		origin, err := utils.GetConsoleTitle()
 		if err == nil {
 			utils.SetConsoleTitle(fmt.Sprintf("idle - sleeping until %v", rl.ResetTime.Add(insurance).Format(time.TimeOnly)))
 			defer utils.SetConsoleTitle(origin)
 		} else {
-			log.Warnln("[RateLimiter] Failed to set console title:", err)
+			log.Warnf("[RateLimiter] Failed to set console title: %v", err)
 		}
 
 		select {
@@ -504,7 +504,7 @@ func SelectClient(ctx context.Context, clients []*resty.Client, path string) *re
 		default:
 		case showStateToken <- struct{}{}:
 			defer func() { <-showStateToken }()
-			log.Warnln("[RateLimiter] Waiting for any client to wake up")
+			log.Warnf("[RateLimiter] Waiting for any client to wake up")
 			origin, err := utils.GetConsoleTitle()
 			if err == nil {
 				defer utils.SetConsoleTitle(origin)

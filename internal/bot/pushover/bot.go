@@ -39,9 +39,10 @@ func NewBot(cfg *config.PushoverBotConfig, eb *api.EventBus, lh *consolelog.Hub)
 
 // Start 启动 bot
 func (b *Bot) Start() error {
-	b.wg.Add(2)
+	b.wg.Add(1)
 	go b.handleEvents()
 	if b.logHub != nil {
+		b.wg.Add(1)
 		go b.handleLogs()
 	}
 	log.Infof("[bot-pushover] Started")

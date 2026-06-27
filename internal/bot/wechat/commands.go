@@ -42,11 +42,6 @@ func (b *Bot) cmdDownload(ctx context.Context, msg *wechat.Message, args string)
 			ScreenName: target,
 		})
 	}
-
-	b.mu.Lock()
-	b.userTokens[msg.FromUserID] = msg.ContextToken
-	b.mu.Unlock()
-
 	b.wechatBot.Reply(ctx, msg, fmt.Sprintf("📥 Download started for %s\nTask: %s", target, task.ID))
 }
 

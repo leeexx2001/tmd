@@ -35,15 +35,19 @@ func (b *Bot) notifyTaskChanges(data interface{}) {
 	if !ok {
 		return
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
 	for _, task := range tasks {
 		if task.Status != api.TaskStatusCompleted && task.Status != api.TaskStatusFailed {
 			continue
 		}
 		text := b.formatTaskResult(task)
-		for userID := range b.userTokens {
-			// 使用 background context 在事件循环中发送
+		b.mu.Lock()
+		userIDs := make([]string, 0, len(b.userTokens))
+		for uid := range b.userTokens {
+			userIDs = append(userIDs, uid)
+		}
+		b.mu.Unlock()
+
+		for _, userID := range userIDs {
 			ctx := context.Background()
 			if err := b.wechatBot.SendTextToUser(ctx, userID, text); err != nil {
 				log.Warnf("[bot-wechat] Failed to send notification to %s: %v", userID, err)
@@ -83,13 +87,18 @@ func (b *Bot) handleLogs() {
 				continue
 			}
 			b.mu.Lock()
-			for userID := range b.userTokens {
+			userIDs := make([]string, 0, len(b.userTokens))
+			for uid := range b.userTokens {
+				userIDs = append(userIDs, uid)
+			}
+			b.mu.Unlock()
+
+			for _, userID := range userIDs {
 				ctx := context.Background()
 				if err := b.wechatBot.SendTextToUser(ctx, userID, "🔴 "+line); err != nil {
 					log.Warnf("[bot-wechat] Failed to send log notification to %s: %v", userID, err)
 				}
 			}
-			b.mu.Unlock()
 		}
 	}
 }

@@ -61,7 +61,7 @@ func MarkUsersAsDownloaded(ctx context.Context, client *resty.Client, db *sqlx.D
 				strings.Contains(errStr, "unable to get timeline data") {
 				return nil, fmt.Errorf("list %s does not exist or is not accessible", lst.Title())
 			}
-			log.Warnln("[download] ✗", lst.Title(), "-", "failed to get list members:", err)
+			log.Warnf("[download] ✗ %s - failed to get list members: %v", lst.Title(), err)
 			continue
 		}
 
@@ -130,21 +130,21 @@ func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User, dir string, timesta
 	entity, err := syncUserAndEntity(db, user, dir, maxLen)
 	if err != nil {
 		info.Error = fmt.Sprintf("failed to sync user and entity: %v", err)
-		log.Warnln("[download] ✗", user.Title(), "-", "failed to mark user:", err)
+		log.Warnf("[download] ✗ %s - failed to mark user: %v", user.Title(), err)
 		return info
 	}
 
 	if timestamp == nil {
 		if err := entity.ClearLatestReleaseTime(); err != nil {
 			info.Error = fmt.Sprintf("failed to clear latest release time: %v", err)
-			log.Warnln("[download] ✗", user.Title(), "-", "failed to clear latest release time:", err)
+			log.Warnf("[download] ✗ %s - failed to clear latest release time: %v", user.Title(), err)
 			return info
 		}
 		log.Infoln("[download] ✓", user.Title(), "-", "cleared latest release time for full download")
 	} else {
 		if err := entity.SetLatestReleaseTime(*timestamp); err != nil {
 			info.Error = fmt.Sprintf("failed to set latest release time: %v", err)
-			log.Warnln("[download] ✗", user.Title(), "-", "failed to set latest release time:", err)
+			log.Warnf("[download] ✗ %s - failed to set latest release time: %v", user.Title(), err)
 			return info
 		}
 	}
@@ -153,7 +153,7 @@ func markSingleUserWithInfo(db *sqlx.DB, user *twitter.User, dir string, timesta
 	eid, err := entity.Id()
 	if err != nil {
 		info.Error = fmt.Sprintf("failed to get entity id: %v", err)
-		log.Warnln("[download] ✗", user.Title(), "-", "failed to get entity id:", err)
+		log.Warnf("[download] ✗ %s - failed to get entity id: %v", user.Title(), err)
 		return info
 	}
 	info.EntityID = eid

@@ -119,7 +119,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			if !loaded {
 				pathEntity, err = syncUserAndEntity(db, user, dir, opts.normalizedMaxFileNameLen())
 				if err != nil {
-					log.Warnln("[batch] ✗", user.Title(), "-", "failed to update user or entity", err)
+						log.Warnf("[batch] ✗ %s - failed to update user or entity: %v", user.Title(), err)
 					continue
 				}
 				syncState.storeUser(user.Id, pathEntity)
@@ -127,14 +127,14 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				upath, _ := pathEntity.Path()
 				linkds, err := database.GetUserLinks(db, user.Id)
 				if err != nil {
-					log.Warnln("[batch] ✗", user.Title(), "-", "failed to get links to user:", err)
+					log.Warnf("[batch] ✗ %s - failed to get links to user: %v", user.Title(), err)
 				}
 				for _, linkd := range linkds {
 					if err = updateUserLink(linkd, db, upath); err != nil {
 						symlinkWarnMu.Lock()
 						symlinkWarnCount++
 						if symlinkWarnCount == 1 {
-							log.Warnln("[batch] ✗", user.Title(), "-", "symlink permission denied (suppressing further warnings)")
+							log.Warnf("[batch] ✗ %s - symlink permission denied (suppressing further warnings)", user.Title())
 						}
 						symlinkWarnMu.Unlock()
 					}
@@ -153,7 +153,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 
 				if user.IsProtected && user.Followstate == twitter.FS_UNFOLLOW && autoFollow {
 					if err := twitter.FollowUser(ctx, client, user); err != nil {
-						log.Warnln("[batch] ✗", user.Title(), "-", "failed to follow user:", err)
+						log.Warnf("[batch] ✗ %s - failed to follow user: %v", user.Title(), err)
 					} else {
 						log.Debugln("[batch] ✓", user.Title(), "-", "follow request has been sent")
 					}
@@ -170,7 +170,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			upath, _ := pathEntity.Path()
 			linkname, err := pathEntity.Name()
 			if err != nil {
-				log.Warnln("[batch] ✗", user.Title(), "-", "failed to get entity name:", err)
+				log.Warnf("[batch] ✗ %s - failed to get entity name: %v", user.Title(), err)
 				continue
 			}
 
@@ -194,7 +194,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 				symlinkWarnMu.Lock()
 				symlinkWarnCount++
 				if symlinkWarnCount == 1 {
-					log.Warnln("[batch] ✗", user.Title(), "-", "symlink permission denied (suppressing further warnings)")
+					log.Warnf("[batch] ✗ %s - symlink permission denied (suppressing further warnings)", user.Title())
 				}
 				symlinkWarnMu.Unlock()
 			}
@@ -246,14 +246,14 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 
 		user := uidToUser[ent.UserId()]
 		if user == nil {
-			log.Warnln("[batch] ✗", fmt.Sprintf("(uid:%d)", ent.UserId()), "-", "user not found in uidToUser, skipping")
+			log.Warnf("[batch] ✗ (uid:%d) - user not found in uidToUser, skipping", ent.UserId())
 			markUserDone("")
 			return
 		}
 
 		entityName, nameErr := ent.Name()
 		if nameErr != nil {
-			log.Warnln("[batch] ✗", user.Title(), "-", "failed to get entity name:", nameErr)
+			log.Warnf("[batch] ✗ %s - failed to get entity name: %v", user.Title(), nameErr)
 			markUserDone(user.ScreenName)
 			return
 		}
@@ -271,7 +271,7 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 
 		minTime, err := ent.LatestReleaseTime()
 		if err != nil {
-			log.Warnln("[batch] ✗", entityName, "-", "failed to get latest release time:", err)
+			log.Warnf("[batch] ✗ %s - failed to get latest release time: %v", entityName, err)
 			markUserDone(user.ScreenName)
 			return
 		}
@@ -298,14 +298,14 @@ func BatchUserDownload(ctx context.Context, client *resty.Client, db *sqlx.DB, u
 			return
 		}
 		if err != nil {
-			log.Warnln("[batch] ✗", entityName, "-", "failed to get user medias:", err)
+			log.Warnf("[batch] ✗ %s - failed to get user medias: %v", entityName, err)
 			markUserDone(user.ScreenName)
 			return
 		}
 
 		eid, idErr := ent.Id()
 		if idErr != nil {
-			log.Warnln("[batch] ✗", entityName, "-", "failed to get entity id:", idErr)
+			log.Warnf("[batch] ✗ %s - failed to get entity id: %v", entityName, idErr)
 			markUserDone(user.ScreenName)
 			return
 		}
@@ -458,7 +458,7 @@ func popNextBatchEntity(
 		if nameErr != nil {
 			entityName = fmt.Sprintf("(uid:%d)", next.UserId())
 		}
-		log.Warnln("[batch] User depth exceeds limit:", entityName, "- depth:", depth)
+		log.Warnf("[batch] User depth exceeds limit: %s - depth: %d", entityName, depth)
 		userEntityHeap.Pop()
 		markUserDone(entityName)
 		return nil, 0, true

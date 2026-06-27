@@ -61,9 +61,10 @@ func (b *Bot) Start() error {
 		log.Warnf("[bot-discord] Failed to register slash commands: %v", err)
 	}
 
-	b.wg.Add(2)
+	b.wg.Add(1)
 	go b.handleEvents()
 	if b.logHub != nil {
+		b.wg.Add(1)
 		go b.handleLogs()
 	}
 	return nil

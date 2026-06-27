@@ -65,9 +65,10 @@ func (b *Bot) Start() error {
 		cli.EventCallback.ListenCallback(r.Context(), r.Body, w)
 	}
 
-	b.wg.Add(2)
+	b.wg.Add(1)
 	go b.handleEvents()
 	if b.logHub != nil {
+		b.wg.Add(1)
 		go b.handleLogs()
 	}
 

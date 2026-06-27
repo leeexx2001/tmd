@@ -382,13 +382,14 @@ func runServer(conf *config.Config, appRootPath string, port int, loginOpts twit
 	// Bot 初始化
 	botConfPath := filepath.Join(appRootPath, "bot_config.yaml")
 	botConf, err := config.LoadBotConfig(botConfPath)
-	if os.IsNotExist(err) {
-		if writeErr := writeDefaultBotConfig(botConfPath); writeErr != nil {
-			log.Warnf("[startup] Failed to create default bot config: %v", writeErr)
+	if err != nil {
+		if os.IsNotExist(err) {
+			if writeErr := writeDefaultBotConfig(botConfPath); writeErr != nil {
+				log.Warnf("[startup] Failed to create default bot config: %v", writeErr)
+			}
+		} else {
+			log.Warnf("[startup] Failed to load bot config: %v", err)
 		}
-		botConf = nil
-	} else if err != nil {
-		log.Warnf("[startup] Failed to load bot config: %v", err)
 	}
 	server.InitBot(initBot(botConf, server))
 

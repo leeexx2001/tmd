@@ -494,9 +494,6 @@ func loadStartupConfig(path string, prompt bool, stderr io.Writer, promptFn func
 func LoadBotConfig(path string) (*BotConfig, error) {
 	conf := &BotConfig{}
 	err := readYAMLFile(path, conf)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -564,7 +561,9 @@ func readYAMLFile(path string, out interface{}) error {
 	if err != nil {
 		return err
 	}
-	return yaml.Unmarshal(data, out)
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	return decoder.Decode(out)
 }
 
 func writeYAMLFile(path string, in interface{}) error {

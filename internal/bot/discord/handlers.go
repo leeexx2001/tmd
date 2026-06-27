@@ -80,7 +80,7 @@ func (b *Bot) handleInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	}
 
 	data := i.ApplicationCommandData()
-	if !b.isAllowed(i.Member.User.ID) {
+	if !b.isAllowed(userIDFromInteraction(i)) {
 		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
@@ -103,6 +103,17 @@ func (b *Bot) handleInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	case "help":
 		b.cmdHelp(s, i)
 	}
+}
+
+// userIDFromInteraction 安全获取用户 ID，兼容频道和私聊
+func userIDFromInteraction(i *discordgo.InteractionCreate) string {
+	if i.Member != nil && i.Member.User != nil {
+		return i.Member.User.ID
+	}
+	if i.User != nil {
+		return i.User.ID
+	}
+	return ""
 }
 
 func (b *Bot) isAllowed(userID string) bool {

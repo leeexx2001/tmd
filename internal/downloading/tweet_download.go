@@ -275,7 +275,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 
 		path, err := tweetNaming.FilePathWithResolver(dir, ext, cfg.pathResolver)
 		if err != nil {
-			log.Warnln("[download] Failed to build media path:", u, "-", err)
+			log.Warnf("[download] Failed to build media path (tweet %d): %s - %v", tweet.Id, u, err)
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -300,7 +300,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 				skippedUrls = append(skippedUrls, u)
 				continue
 			}
-			log.Warnln("[download] Failed to download media:", u, "-", err)
+			log.Warnf("[download] Failed to download media (tweet %d): %s - %v", tweet.Id, u, err)
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -309,7 +309,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 		}
 		if result == nil {
 			err = fmt.Errorf("download returned nil result")
-			log.Warnln("[download] Media download returned nil result:", u)
+			log.Warnf("[download] Media download returned nil result (tweet %d): %s", tweet.Id, u)
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				firstRetryableErr = err
@@ -322,7 +322,7 @@ func downloadTweetMedia(cfg *workerConfig, dir string, tweet *twitter.Tweet, ski
 				skippedUrls = append(skippedUrls, u)
 				continue
 			}
-			log.Warnln("[download] Media download reported failure:", u, "-", result.Error)
+			log.Warnf("[download] Media download reported failure (tweet %d): %s - %v", tweet.Id, u, result.Error)
 			tweet.Urls = append(tweet.Urls, u)
 			if firstRetryableErr == nil {
 				if result.Error != nil {

@@ -25,7 +25,6 @@ type Bot struct {
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
-	mu     sync.Mutex
 }
 
 // NewBot 创建 Gotify bot 实例
@@ -41,9 +40,10 @@ func NewBot(cfg *config.GotifyBotConfig, eb *api.EventBus, lh *consolelog.Hub) *
 
 // Start 启动 bot。非阻塞，订阅 EventBus 和 LogHub。
 func (b *Bot) Start() error {
-	b.wg.Add(2)
+	b.wg.Add(1)
 	go b.handleEvents()
 	if b.logHub != nil {
+		b.wg.Add(1)
 		go b.handleLogs()
 	}
 	log.Infof("[bot-gotify] Started (server: %s)", b.config.ServerURL)
@@ -145,10 +145,18 @@ func (b *Bot) sendNotification(title, message string) {
 		Priority: priority,
 	})
 
-	url := fmt.Sprintf("%s/message?token=%s", b.config.ServerURL, b.config.Token)
-	resp, err := b.client.Post(url, "application/json", bytes.NewReader(body))
+	url := b.config.ServerURL + "/message"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(body))
 	if err != nil {
-		log.Warnf("[bot-gotify] Failed to send notification: %v", err)
+		log.Warnf("[bot-gotify] Failed to create request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Gotify-Key", b.config.Token)
+
+	resp, err := b.client.Do(req)
+	if err != nil {
+		log.Warnf("[bot-gotify] Failed to send: %v", err)
 		return
 	}
 	resp.Body.Close()

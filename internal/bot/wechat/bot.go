@@ -72,13 +72,16 @@ func (b *Bot) Start() error {
 		return nil
 	})
 
-	b.wg.Add(2)
+	b.wg.Add(1)
 	go b.handleEvents()
 	if b.logHub != nil {
+		b.wg.Add(1)
 		go b.handleLogs()
 	}
 
+	b.wg.Add(1)
 	go func() {
+		defer b.wg.Done()
 		bot.Run(ctx)
 	}()
 
@@ -129,7 +132,7 @@ func (b *Bot) handleMessage(ctx context.Context, msg *wechat.Message) {
 		b.cmdCancel(ctx, msg, args)
 	case "tasks":
 		b.cmdTasks(ctx, msg)
-	case "help":
+	case "start", "help":
 		b.cmdHelp(ctx, msg)
 	default:
 		b.wechatBot.Reply(ctx, msg, "Unknown command. Send /help for available commands.")

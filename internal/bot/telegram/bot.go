@@ -54,10 +54,12 @@ func (b *Bot) Start() error {
 	u.Timeout = 60
 	b.updates = b.api.GetUpdatesChan(u)
 
-	b.wg.Add(3)
+	b.wg.Add(1)
 	go b.handleUpdates()
+	b.wg.Add(1)
 	go b.handleEvents()
 	if b.logHub != nil {
+		b.wg.Add(1)
 		go b.handleLogs()
 	}
 	return nil
